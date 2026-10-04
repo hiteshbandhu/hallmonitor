@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hiteshbandhu/hallmonitor/internal/ask"
 	"github.com/hiteshbandhu/hallmonitor/internal/model"
 	"github.com/hiteshbandhu/hallmonitor/internal/proc"
 	"github.com/hiteshbandhu/hallmonitor/internal/usage"
@@ -136,8 +137,23 @@ func (a Adapter) Collect(ctx context.Context) ([]model.Session, error) {
 		}
 	}
 	sessions = kept
+	pending := map[string]ask.Ask{}
+	for _, a := range ask.Pending(time.Now()) {
+		pending[a.SessionID] = a
+	}
 	for i := range sessions {
 		enrich(home, &sessions[i])
+		if a, ok := pending[sessions[i].ID]; ok {
+			// Waiting on you, whatever the session file says.
+			a := a
+			sessions[i].Ask = &a
+			sessions[i].Status = model.StatusWaiting
+			if a.Kind == ask.KindPermission {
+				sessions[i].Last = "wants to use " + a.Tool + " · " + a.Detail
+			} else if len(a.Questions) > 0 {
+				sessions[i].Last = "asks · " + a.Questions[0].Question
+			}
+		}
 	}
 	return sessions, nil
 }

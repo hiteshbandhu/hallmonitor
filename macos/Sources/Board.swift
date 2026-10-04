@@ -21,6 +21,7 @@ struct Session: Decodable, Hashable {
     var context_tokens: Int?
     var subagents: Subagents?
     var extra: [String: String]?
+    var ask: PendingAsk?
 
     /// Subagents running right now; only counts while the session works.
     var runningSubagents: Int { working || needsYou ? subagents?.running ?? 0 : 0 }
@@ -220,6 +221,14 @@ final class Board: ObservableObject {
     }
 
     nonisolated static func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+
+    /// Adds or removes the Claude Code hooks that send questions to the notch.
+    func setAnswerHooks(_ on: Bool) {
+        let p = shellCommand(on ? "hook --install" : "hook --uninstall")
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        try? p.run()
+    }
 
     /// Starts the helper over, e.g. after a setting it reads changed.
     func restart() { process?.terminate() }

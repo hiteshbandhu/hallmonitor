@@ -58,7 +58,8 @@ final class NotchController {
 
         let frame = NSRect(x: screen.frame.midX - geo.canvas.width / 2, y: screen.frame.maxY - geo.canvas.height,
                            width: geo.canvas.width, height: geo.canvas.height)
-        let p = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let p = NotchPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        p.model = model
         p.isOpaque = false
         p.backgroundColor = .clear
         p.hasShadow = false
@@ -81,6 +82,15 @@ final class NotchController {
         guard let panel, panel.isVisible, let screen = cachedScreen, let geo = model.geometry else { return }
         let m = NSEvent.mouseLocation
         let top = screen.frame.maxY
+        // A question takes over the notch until it's answered: it takes
+        // clicks where it's drawn, and nowhere else.
+        if case .ask = model.mode {
+            let s = geo.size(for: model.mode)
+            let zone = NSRect(x: screen.frame.midX - s.width / 2, y: top - s.height, width: s.width, height: s.height)
+            let inside = zone.contains(m)
+            if panel.ignoresMouseEvents == inside { panel.ignoresMouseEvents = !inside }
+            return
+        }
         let zone: NSRect
         if model.hovering {
             let s = geo.size(for: .expanded(rows: model.rowCount))
@@ -97,6 +107,13 @@ final class NotchController {
     }
 }
 
+/// The notch's panel never takes keyboard focus, except while you type an
+/// answer into it.
+final class NotchPanel: NSPanel {
+    weak var model: NotchModel?
+    override var canBecomeKey: Bool { MainActor.assumeIsolated { model?.wantsKeyboard ?? false } }
+}
+
 /// Takes the first click even though the panel never becomes key, so one
 /// click on a row is enough.
 final class ClickThroughHostingView<Content: View>: NSHostingView<Content> {
@@ -108,6 +125,7 @@ enum NotchMode: Equatable {
     case compact
     case banner
     case expanded(rows: Int)
+    case ask(height: CGFloat)
 }
 
 struct NotchGeometry {
@@ -119,7 +137,7 @@ struct NotchGeometry {
     let shoulder: CGFloat = 8
 
     static let rowHeight: CGFloat = 56
-    var canvas: CGSize { CGSize(width: max(notchWidth + 2 * ear, 480) + 2 * shoulder + 40, height: notchHeight + 20 + 4 * NotchGeometry.rowHeight + 40) }
+    var canvas: CGSize { CGSize(width: max(notchWidth + 2 * ear, 480) + 2 * shoulder + 40, height: notchHeight + 560) }
 
     func size(for mode: NotchMode) -> CGSize {
         switch mode {
@@ -127,13 +145,14 @@ struct NotchGeometry {
         case .compact: return CGSize(width: notchWidth + 2 * ear, height: notchHeight)
         case .banner: return CGSize(width: max(notchWidth + 2 * ear, 420), height: notchHeight + 64)
         case .expanded(let rows): return CGSize(width: max(notchWidth + 2 * ear, 480), height: notchHeight + 14 + CGFloat(max(rows, 1)) * NotchGeometry.rowHeight)
+        case .ask(let h): return CGSize(width: max(notchWidth + 2 * ear, 470), height: notchHeight + min(h, 500))
         }
     }
 
     func radius(for mode: NotchMode) -> CGFloat {
         switch mode {
         case .hidden, .compact: return notchHeight * 0.32
-        case .banner, .expanded: return 20
+        case .banner, .expanded, .ask: return 20
         }
     }
 }
@@ -151,7 +170,14 @@ final class NotchModel: ObservableObject {
 
     var rowCount: Int { min(4, max(1, visible.count)) }
 
+    /// The oldest question waiting for an answer, and the agent asking it.
+    @Published private(set) var asking: (session: Session, ask: PendingAsk)?
+    @Published private(set) var askIndex = 0
+    @Published var wantsKeyboard = false
+    private var answeredIDs: Set<String> = []
+
     var mode: NotchMode {
+        if let a = asking { return .ask(height: askHeight(a.ask, index: askIndex)) }
         if hovering { return .expanded(rows: rowCount) }
         if banner != nil { return .banner }
         if !working.isEmpty || !needsYou.isEmpty { return .compact }
@@ -176,9 +202,30 @@ final class NotchModel: ObservableObject {
                     self.working = board.working
                     self.needsYou = board.needsYou
                     self.visible = board.sessions.filter { !$0.stale }
+                    let next = board.sessions
+                        .compactMap { s in s.ask.map { (session: s, ask: $0) } }
+                        .filter { !self.answeredIDs.contains($0.ask.id) }
+                        .min { ($0.ask.deadline ?? .distantFuture) < ($1.ask.deadline ?? .distantFuture) }
+                    if next?.ask.id != self.asking?.ask.id {
+                        self.askIndex = 0
+                        self.wantsKeyboard = false
+                        if next != nil { self.hovering = false }
+                    }
+                    self.asking = next
                 }
             }
             .store(in: &bag)
+    }
+
+    func layoutAsk(index: Int) { askIndex = index }
+
+    /// The card answered (or passed): fold it away now, before the feed
+    /// catches up.
+    func answered(_ id: String) {
+        answeredIDs.insert(id)
+        wantsKeyboard = false
+        if asking?.ask.id == id { asking = nil }
+        askIndex = 0
     }
 
     func announce(_ e: BoardEvent) {
@@ -222,6 +269,13 @@ struct NotchView: View {
             switch mode {
             case .banner:
                 if let e = model.banner { BannerRow(event: e).padding(.horizontal, 16 + geo.shoulder).transition(.blurFade) }
+            case .ask:
+                if let a = model.asking {
+                    AskCard(session: a.session, ask: a.ask, model: model)
+                        .id(a.ask.id)
+                        .padding(.horizontal, geo.shoulder)
+                        .transition(.blurFade)
+                }
             case .expanded:
                 AgentList(sessions: Array(model.visible.prefix(4))) { model.open($0) }
                     .padding(.horizontal, 8 + geo.shoulder)

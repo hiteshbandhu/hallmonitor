@@ -368,6 +368,7 @@ struct SettingsView: View {
     @AppStorage("showCount") private var showCount = false
     @AppStorage("showLimit") private var showLimit = true
     @AppStorage("probeLimits") private var probeLimits = true
+    @AppStorage("answerFromNotch") private var answerFromNotch = false
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
@@ -377,6 +378,15 @@ struct SettingsView: View {
                 Toggle("Notify when an agent needs you or finishes", isOn: $notify)
                 Toggle("Show agent count in the menu bar", isOn: $showCount)
                 Toggle("Show plan usage in the menu bar", isOn: $showLimit)
+            }
+            Section {
+                Toggle("Answer Claude’s questions from the notch", isOn: $answerFromNotch)
+                    .onChange(of: answerFromNotch) { _, on in
+                        (NSApp.delegate as? AppDelegate)?.board.setAnswerHooks(on)
+                    }
+            } footer: {
+                Text("When Claude Code asks you something or wants permission, answer it in the notch. Adds a hook to ~/.claude/settings.json (backed up first); if you don’t answer within two minutes, Claude asks you the usual way.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             Section {
                 Toggle("Check Claude plan limits every 15 minutes", isOn: $probeLimits)

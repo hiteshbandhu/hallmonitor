@@ -3,6 +3,8 @@ package model
 
 import (
 	"context"
+
+	"github.com/hiteshbandhu/hallmonitor/internal/ask"
 	"strconv"
 	"time"
 )
@@ -58,6 +60,8 @@ type Session struct {
 	Extra    map[string]string `json:"extra,omitempty"`
 	// Subagents the session started; nil when it never started any.
 	Subagents *Subagents `json:"subagents,omitempty"`
+	// A question or permission prompt waiting for an answer from the notch.
+	Ask *ask.Ask `json:"ask,omitempty"`
 
 	// History is the status sampled once per refresh, oldest first. Filled
 	// by the hub; not part of the JSON snapshot.

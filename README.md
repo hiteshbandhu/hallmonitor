@@ -26,7 +26,7 @@ You start an agent, switch to something else, and ten minutes later wonder: is i
 - **Across machines**: your laptop, dev box and GPU server on one board, over plain SSH.
 - **How much you use them**: agent-hours, tokens, cache hits, plan limits.
 
-It only reads. It never sends prompts, approves anything, or talks to your agents.
+It only reads, unless you turn on answering from the notch; then it hands back exactly the answer you click, nothing else.
 
 ## Install
 
@@ -80,6 +80,8 @@ Open **Hall Monitor** from the menu bar (⌘O) or the Dock for the full picture 
 ![the notch](docs/notch.png)
 
 On a MacBook, hallmonitor lives around the notch: small ears show who's working, it drops open when an agent needs you or finishes a long task, and hovering the notch lists everything in flight. Click an agent to jump to it: the Claude app opens on that session, and terminal agents bring their terminal (Terminal, iTerm, Ghostty, cmux, VS Code, Cursor, tmux…) to the front. The rest of the time, clicks pass straight through.
+
+**Answer from the notch.** Turn on *Answer Claude's questions from the notch* in Settings and, when Claude Code asks you something or wants permission to run a tool, the question drops out of the notch: click an option (or type your own answer), or Allow / Deny. It uses Claude Code's own hooks (`hallmonitor hook`, added to `~/.claude/settings.json` with a backup); if you don't answer within two minutes, or pick *Answer in Claude*, Claude asks you the usual way. It applies to Claude Code sessions started after you turn it on.
 
 <img src="docs/menu.png" width="300" align="right" alt="the menu bar menu">
 
@@ -135,7 +137,8 @@ Provider logos are drawn as real images in terminals that speak the kitty graphi
 
 ## Privacy
 
-- Local and read-only. No telemetry, no accounts.
+- Local and read-only by default. No telemetry, no accounts.
+- The one exception is opt-in: with *Answer from the notch* on, the answer you click is handed back to Claude Code through its hooks. Nothing is ever sent without your click.
 - Reads session metadata and transcript tails on your machine; never your auth files or tokens.
 - To read Claude plan limits it runs Claude Code's `/usage` in safe mode (no hooks, MCP servers, plugins or tools) in its own empty folder, and removes that session's transcript afterwards.
 - The usage ledger (`~/.local/share/hallmonitor/usage/`) stores counts only.
@@ -154,6 +157,7 @@ hallmonitor [flags]
   --images auto|kitty|blocks|off
 hallmonitor usage [--days 7|30] [--json] [--probe]
 hallmonitor statusline [--install] [--then '<your status line>']
+hallmonitor hook --install | --uninstall   # answer from the notch
 ```
 
 ## Building

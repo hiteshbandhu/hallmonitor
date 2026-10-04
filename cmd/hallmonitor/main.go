@@ -47,6 +47,10 @@ func main() {
 		runStatusline(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "hook" {
+		runHook(os.Args[2:])
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "focus" {
 		runFocus(context.Background(), os.Args[2:])
 		return

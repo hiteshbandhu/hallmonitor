@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var defaultsObserver: Any?
     private var settingsWindow: NSWindow?
     private lazy var main = MainWindow(board: board)
+    private var askHeartbeat: Timer?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         Main.migrateSettings()
@@ -53,6 +54,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         status = StatusMenu(board: board)
         status?.onSettings = { [weak self] in self?.showSettings() }
         status?.onOpen = { [weak self] pane in self?.main.show(pane) }
+        // While answering from the notch is on, tell the hook we're listening.
+        askHeartbeat = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { _ in
+            if UserDefaults.standard.bool(forKey: "answerFromNotch") { Asks.heartbeat() }
+        }
+        askHeartbeat?.tolerance = 1
+        if UserDefaults.standard.bool(forKey: "answerFromNotch") { Asks.heartbeat() }
         MainMenu.install(openPane: { [weak self] p in self?.main.show(p) }, settings: { [weak self] in self?.showSettings() })
         if CommandLine.arguments.contains("--window") { main.show() }
         notch.start(board: board)
