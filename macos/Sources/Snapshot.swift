@@ -42,11 +42,32 @@ enum SnapshotMode {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                             render(model, geo, dir, "notch_banner_done")
                             renderView(SettingsView(), size: NSSize(width: 460, height: 420), dir, "settings")
+                            renderAsks(board: board, geo: geo, dir: dir)
                             renderWindow(board: board, dir: dir) { NSApp.terminate(nil) }
                         }
                     }
                 }
             }
+        }
+    }
+
+    /// The notch asking a question, and asking for permission (sample data).
+    private static func renderAsks(board: Board, geo: NotchGeometry, dir: String) {
+        guard let s = board.sessions.first(where: { $0.provider == "claude" }) ?? board.sessions.first else { return }
+        let soon = Date().addingTimeInterval(102)
+        let q = PendingAsk(id: "snap-q", session_id: s.id, kind: "question", questions: [
+            AskQuestion(question: "The webhook retries fail on duplicate events. How should I handle them?", header: "Approach",
+                        options: [AskOption(label: "Idempotency keys", description: "Store each event ID and skip repeats"),
+                                  AskOption(label: "Upsert on event ID", description: "Let the database dedupe"),
+                                  AskOption(label: "Leave it for now", description: "Log duplicates and move on")],
+                        multiSelect: false)], tool: nil, detail: nil, deadline: soon)
+        let p = PendingAsk(id: "snap-p", session_id: s.id, kind: "permission", questions: nil, tool: "Bash",
+                           detail: "pnpm prisma migrate deploy && pnpm test --filter billing", deadline: soon)
+        for (name, a) in [("notch_ask_question", q), ("notch_ask_permission", p)] {
+            let m = NotchModel()
+            m.geometry = geo
+            m.preview(s, a)
+            renderView(NotchView(model: m).transaction { $0.animation = nil }, size: geo.canvas, dir, name)
         }
     }
 

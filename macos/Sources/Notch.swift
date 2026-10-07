@@ -219,6 +219,9 @@ final class NotchModel: ObservableObject {
 
     func layoutAsk(index: Int) { askIndex = index }
 
+    /// For snapshots: show a question without the feed.
+    func preview(_ s: Session, _ a: PendingAsk) { asking = (session: s, ask: a) }
+
     /// The card answered (or passed): fold it away now, before the feed
     /// catches up.
     func answered(_ id: String) {
