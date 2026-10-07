@@ -285,7 +285,6 @@ icon_root.location = ICON_AT
 for o in icon_objs:
     if o.parent is None:
         o.parent = icon_root
-dot_obj = icon_objs[1]
 
 
 def area(name, loc, rot, energy, size, color=(1, 1, 1)):
@@ -313,14 +312,7 @@ for i, p in enumerate(bar_nodes):
         k = out_expo(prog(f, on, 10))
         sock.default_value = 0.05 + 0.5 * k + 1.6 * math.exp(-max(0, f - on) / 5) * (f >= on)
         sock.keyframe_insert("default_value", frame=f)
-ring_obj = icon_objs[2]
-for f in range(0, round(F(3)) + 1):
-    k = spring(prog(f, F(2, 2), 18), 0.4)
-    dot_obj.scale = (k, k, 0.55 * k)
-    dot_obj.keyframe_insert("scale", frame=f)
-    kr = max(0.001, out_expo(prog(f, F(2, 2), 8)))
-    ring_obj.scale = (kr, kr, 1)
-    ring_obj.keyframe_insert("scale", frame=f)
+# (the icon no longer has a dot)
 
 # The icon turns slowly toward us; its name comes in under it.
 key(icon_root, None, lambda f: {"rot": (math.radians(lerp(14, 4, out_cubic(prog(f, 0, 110)))),

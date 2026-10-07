@@ -3,8 +3,7 @@
     blender -b -P launch/icon.py -- out.png [size]
 
 A graphite squircle on Apple's macOS icon grid (an 824 px tile on a 1024
-canvas), carrying the menu bar glyph as three raised, glowing bars and the
-amber "needs you" dot.
+canvas), carrying the menu bar glyph as three raised, glowing bars.
 """
 import math
 import sys
@@ -47,7 +46,7 @@ def principled(name, **kw):
 
 
 def build():
-    """Adds the icon (tile, bars, dot) to the current scene, centered on the
+    """Adds the icon (tile and bars) to the current scene, centered on the
     origin facing +Z, 8.24 units across. Returns the objects, and the bars'
     and dot's Principled nodes (to animate their glow)."""
     scene = bpy.context.scene
@@ -107,11 +106,11 @@ def build():
     tile.data.materials.append(tm)
 
     # ---- the glyph: three rounded bars, heights 7 / 12 / 9 like the menu bar ----
-    BAR_W = 1.25
+    BAR_W = 1.4
     GAP = 0.62
-    UNIT = 0.36
+    UNIT = 0.4
     heights = [7, 12, 9]
-    base_y = -2.45
+    base_y = -2.4
     total_w = 3 * BAR_W + 2 * GAP
     colors = [("#2dd4bf", "#a3e635"), ("#22c55e", "#facc15"), ("#14b8a6", "#84cc16")]
     for i, hgt in enumerate(heights):
@@ -139,25 +138,8 @@ def build():
         glows.append(p)
         bars.append(bar)
 
-    # ---- the "needs you" dot, knocked out of the tallest bar's corner ----
-    dot_x = -total_w / 2 + BAR_W / 2 + 2 * (BAR_W + GAP) + BAR_W * 0.38
-    dot_y = base_y + 9 * UNIT + 0.62
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.6, segments=64, ring_count=32, location=(dot_x, dot_y, 0.45))
-    dot = bpy.context.active_object
-    dot.scale.z = 0.55
-    bpy.ops.object.shade_smooth()
-    dm, dp = principled("dot", **{"Base Color": srgb("#f59e0b"), "Emission Color": srgb("#f59e0b"),
-                                  "Emission Strength": 0.7, "Roughness": 0.15, "Coat Weight": 1.0})
-    dot.data.materials.append(dm)
-    # A dark ring around the dot, so it reads as separate from the bar.
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.84, depth=0.62, vertices=96, location=(dot_x, dot_y, 0.2))
-    ring = bpy.context.active_object
-    bpy.ops.object.shade_smooth()
-    ring.data.materials.append(tm)
-
-
-    objs = [tile, dot, ring] + bars
-    return objs, glows, dp
+    objs = [tile] + bars
+    return objs, glows, None
 
 
 if __name__ == "__main__":
