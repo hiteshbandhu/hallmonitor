@@ -420,6 +420,7 @@ enum Provider {
         switch p {
         case "claude": return "Claude"
         case "codex": return "Codex"
+        case "opencode": return "opencode"
         default: return p.capitalized
         }
     }
@@ -428,17 +429,21 @@ enum Provider {
         switch p {
         case "claude": return NSColor(red: 0.85, green: 0.47, blue: 0.34, alpha: 1)
         case "codex": return NSColor(red: 0.49, green: 0.83, blue: 0.99, alpha: 1)
+        // opencode's mark is monochrome: warm stone, dark on light and light on dark.
+        case "opencode": return opencodeColor
         default: return .secondaryLabelColor
         }
     }
 
-    /// The vendor app's own icon if it's installed; nil otherwise.
+    /// The vendor app's own icon if it's installed; for opencode, its block
+    /// mark drawn on a tile; nil otherwise.
     static func icon(_ p: String) -> NSImage? {
         if let cached = iconCache[p] { return cached }
         let candidates: [String]
         switch p {
         case "claude": candidates = ["Claude.app"]
         case "codex": candidates = ["Codex.app", "ChatGPT.app"]
+        case "opencode": candidates = ["OpenCode.app"]
         default: candidates = []
         }
         let roots = ["/Applications", NSHomeDirectory() + "/Applications"]
@@ -452,10 +457,35 @@ enum Provider {
                 }
             }
         }
+        if p == "opencode" {
+            let img = opencodeTile()
+            iconCache[p] = img
+            return img
+        }
         return nil
     }
 
+    /// opencode's hollow block on a dark stone tile, like the terminal board.
+    private static func opencodeTile() -> NSImage {
+        NSImage(size: NSSize(width: 64, height: 64), flipped: false) { r in
+            NSColor(red: 0.16, green: 0.15, blue: 0.14, alpha: 1).setFill()
+            NSBezierPath(roundedRect: r, xRadius: r.width * 0.225, yRadius: r.height * 0.225).fill()
+            let u = r.width / 24 // the mark is drawn on a 24-unit grid
+            let ring = NSBezierPath(rect: NSRect(x: 7 * u, y: 5 * u, width: 10 * u, height: 14 * u))
+            ring.append(NSBezierPath(rect: NSRect(x: 10 * u, y: 9 * u, width: 4 * u, height: 6 * u)).reversed)
+            NSColor(red: 0.91, green: 0.90, blue: 0.89, alpha: 1).setFill()
+            ring.fill()
+            return true
+        }
+    }
+
     private static var iconCache: [String: NSImage] = [:]
+
+    private static let opencodeColor = NSColor(name: nil) { a in
+        a.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+            ? NSColor(red: 0.84, green: 0.83, blue: 0.82, alpha: 1)
+            : NSColor(red: 0.34, green: 0.33, blue: 0.31, alpha: 1)
+    }
 }
 
 func shortDuration(_ t: TimeInterval) -> String {

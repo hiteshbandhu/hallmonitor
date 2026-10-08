@@ -27,7 +27,7 @@ import (
 )
 
 type Options struct {
-	Providers []string     // filter cycle; empty = claude, codex
+	Providers []string     // filter cycle; empty = claude, codex, opencode
 	CWD       string       // prefix filter
 	Images    termimg.Mode // how to draw provider logos
 	FetchIcon bool         // allow fetching logos from the CDN
@@ -104,7 +104,7 @@ const (
 
 func loadLogos(ctx context.Context, opt Options) logosMsg {
 	out := logosMsg{logos: map[string]logo{}}
-	for i, p := range []string{"claude", "codex"} {
+	for i, p := range []string{"claude", "codex", "opencode"} {
 		ic, err := icons.Load(ctx, p, opt.FetchIcon)
 		if err != nil {
 			continue
@@ -166,7 +166,7 @@ func newModel(h *hub.Hub, opt Options) *uiModel {
 	if len(opt.Providers) > 0 {
 		f = append(f, opt.Providers...)
 	} else {
-		f = append(f, "claude", "codex")
+		f = append(f, "claude", "codex", "opencode")
 	}
 	m := &uiModel{hub: h, filters: f, cwd: opt.CWD, home: home, hostname: hn, interval: 2 * time.Second,
 		usageDays: 7, showUsage: opt.StartView == "usage"}
@@ -410,9 +410,11 @@ var (
 	cRed    = ac{Light: "#b91c1c", Dark: "#f87171"}
 	cViolet = ac{Light: "#6d28d9", Dark: "#a78bfa"}
 
-	// Provider colors: Claude's clay orange, Codex's cool blue.
-	cClaude = ac{Light: "#b3532f", Dark: "#d97757"}
-	cCodex  = ac{Light: "#0369a1", Dark: "#7dd3fc"}
+	// Provider colors: Claude's clay orange, Codex's cool blue, opencode's
+	// monochrome as a warm stone.
+	cClaude   = ac{Light: "#b3532f", Dark: "#d97757"}
+	cCodex    = ac{Light: "#0369a1", Dark: "#7dd3fc"}
+	cOpencode = ac{Light: "#57534e", Dark: "#d6d3d1"}
 )
 
 func fg(c lipgloss.TerminalColor) lipgloss.Style { return lipgloss.NewStyle().Foreground(c) }
@@ -437,18 +439,22 @@ func providerColor(p string) lipgloss.TerminalColor {
 		return cClaude
 	case "codex":
 		return cCodex
+	case "opencode":
+		return cOpencode
 	}
 	return cMuted
 }
 
-// providerMark is each tool's own mark: the ✻ Claude Code shows, and the >_
-// prompt Codex uses.
+// providerMark is each tool's own mark: the ✻ Claude Code shows, the >_
+// prompt Codex uses, and a block for opencode's pixel logo.
 func providerMark(p string) string {
 	switch p {
 	case "claude":
 		return "✻ Claude"
 	case "codex":
 		return ">_ Codex"
+	case "opencode":
+		return "▣ opencode"
 	}
 	return p
 }
@@ -467,6 +473,11 @@ func providerChip(p string) string {
 			Foreground(ac{Light: "#e0f2fe", Dark: "#7dd3fc"}).
 			Background(ac{Light: "#0c4a6e", Dark: "#1f2937"}).
 			Render(" >_ Codex ")
+	case "opencode":
+		return lipgloss.NewStyle().Bold(true).
+			Foreground(ac{Light: "#fafaf9", Dark: "#e7e5e4"}).
+			Background(ac{Light: "#292524", Dark: "#292524"}).
+			Render(" ▣ opencode ")
 	}
 	return fg(cMuted).Render(" " + p + " ")
 }
@@ -843,7 +854,7 @@ func (m *uiModel) empty(w, h int) []string {
 	out := make([]string, h)
 	msg := []string{
 		lipgloss.NewStyle().Bold(true).Foreground(cFg).Render("All quiet."),
-		fg(cMuted).Render("No Claude Code or Codex sessions running right now."),
+		fg(cMuted).Render("No Claude Code, Codex or opencode sessions running right now."),
 		fg(cFaint).Render("Start one in any terminal and it shows up here within seconds."),
 	}
 	top := max(0, h/2-2)

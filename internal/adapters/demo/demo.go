@@ -34,6 +34,10 @@ var fleet = []seed{
 		[]string{"Bash · git log v4.1..HEAD", "Write · CHANGELOG.md"}, "draft the 4.2 changelog from merged PRs"},
 	{"build-01", "codex", "Bump Go to 1.26", "/opt/ci/services", "gpt-6-astra", 58_000, 29,
 		[]string{"exec · go test ./...", "apply_patch", "exec · go mod tidy"}, "upgrade every service to go 1.26"},
+	{"", "opencode", "Rate-limit the public API", "/home/dev/gateway", "claude-sonnet-5", 88_000, 21,
+		[]string{"edit · ratelimit.go", "bash · go test ./...", "grep · X-RateLimit"}, "add per-key rate limits to the public endpoints"},
+	{"gpu-box", "opencode", "Profile the data loader", "/srv/ml/loader", "kimi-k2.5", 47_000, 27,
+		[]string{"bash · py-spy record -o loader.svg", "read · dataset.py", "edit · dataset.py"}, "the loader stalls between epochs, find the hot spot"},
 	{"", "claude", "Refactor auth middleware", "/home/dev/pay-api", "claude-opus-5-5", 133_000, 37,
 		[]string{"Edit · middleware/auth.go", "Bash · go test ./auth/..."}, "split session and token auth"},
 }

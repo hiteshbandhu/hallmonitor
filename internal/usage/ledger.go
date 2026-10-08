@@ -1,10 +1,10 @@
 // Package usage keeps a local ledger of how much you use coding agents.
 //
 // It reads the logs the agents already write (Claude Code transcripts, Codex
-// rollouts) incrementally, remembering how far into each file it got, and
-// folds them into per-day files of hourly buckets under
-// $XDG_DATA_HOME/hallmonitor/usage (default ~/.local/share). The ledger outlives
-// the source logs, which Claude Code prunes after 30 days by default.
+// rollouts, opencode's database) incrementally, remembering how far into
+// each one it got, and folds them into per-day files of hourly buckets under
+// $XDG_DATA_HOME/hallmonitor/usage (default ~/.local/share). The ledger
+// outlives the source logs, which Claude Code prunes after 30 days by default.
 //
 // Only counts are stored: tokens, replies, prompts, tool names, active time.
 // No prompt text or tool input ever lands in the ledger.
@@ -181,6 +181,9 @@ func (l *Ledger) Update(ctx context.Context, progress Progress) error {
 		if progress != nil {
 			progress(done, total)
 		}
+	}
+	if ctx.Err() == nil {
+		l.scanOpencode(ctx)
 	}
 	return l.save()
 }

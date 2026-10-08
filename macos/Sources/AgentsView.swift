@@ -33,7 +33,7 @@ struct AgentsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 PaneHeader(title: "Agents", subtitle: subtitle) {
-                    Chips(options: [("all", "All"), ("claude", "Claude"), ("codex", "Codex")], selection: $nav.filter)
+                    Chips(options: [("all", "All"), ("claude", "Claude"), ("codex", "Codex"), ("opencode", "opencode")], selection: $nav.filter)
                     SearchField(text: $nav.search, prompt: "Search agents")
                     IconButton(symbol: "terminal", help: "Open the board in a terminal") { Launcher.openBoard() }
                     IconButton(symbol: "sidebar.right", on: nav.inspector, help: "Show or hide details") {
@@ -46,7 +46,7 @@ struct AgentsView: View {
                         Label(board.connected ? "No agents running" : "Connecting…",
                               systemImage: board.connected ? "moon.zzz" : "antenna.radiowaves.left.and.right")
                     } description: {
-                        Text(nav.search.isEmpty ? "Start Claude Code or Codex and they show up here, live."
+                        Text(nav.search.isEmpty ? "Start Claude Code, Codex or opencode and they show up here, live."
                                                 : "Nothing matches “\(nav.search)”.")
                     }
                     .frame(maxWidth: .infinity, minHeight: 260)

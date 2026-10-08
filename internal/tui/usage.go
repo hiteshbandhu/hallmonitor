@@ -167,15 +167,34 @@ func textTile(label, value string, color func(row int) lipgloss.TerminalColor) [
 	return append(out, strings.Repeat(" ", w))
 }
 
-// dailyChart is a stacked bar per day: Claude on the bottom, Codex on top.
+// chartProviders stack bottom to top in the daily chart.
+var chartProviders = []struct {
+	id, name string
+	color    ac
+}{{"claude", "Claude", cClaude}, {"codex", "Codex", cCodex}, {"opencode", "opencode", cOpencode}}
+
+// dailyChart is a stacked bar per day: Claude on the bottom, then Codex,
+// then opencode.
 func (m *uiModel) dailyChart(s usage.Summary, w, h int) []string {
 	days := s.Days
 	peak := 0.0
+	shown := chartProviders[:2] // opencode joins the legend once it has hours
 	for _, d := range days {
-		peak = max(peak, d.ByProvider["claude"].Active+d.ByProvider["codex"].Active)
+		sum := 0.0
+		for _, p := range chartProviders {
+			sum += d.ByProvider[p.id].Active
+		}
+		peak = max(peak, sum)
+		if d.ByProvider["opencode"].Active > 0 {
+			shown = chartProviders
+		}
 	}
 	title := fg(cMuted).Bold(true).Render("AGENT-HOURS PER DAY") + fg(cFaint).Render(fmt.Sprintf("  last %d days · peak %s", len(days), hours(peak)))
-	legend := fg(cClaude).Render("■") + fg(cMuted).Render(" Claude  ") + fg(cCodex).Render("■") + fg(cMuted).Render(" Codex")
+	var lg []string
+	for _, p := range shown {
+		lg = append(lg, fg(p.color).Render("■")+fg(cMuted).Render(" "+p.name))
+	}
+	legend := strings.Join(lg, "  ")
 	out := []string{title + strings.Repeat(" ", max(2, w-lipgloss.Width(title)-lipgloss.Width(legend))) + legend}
 	if peak == 0 {
 		peak = 1
@@ -196,29 +215,45 @@ func (m *uiModel) dailyChart(s usage.Summary, w, h int) []string {
 		var sb strings.Builder
 		sb.WriteString(fg(cFaint).Render(axis) + " ")
 		for _, d := range days {
-			a := int(d.ByProvider["claude"].Active / peak * float64(eighths))
-			tot := int((d.ByProvider["claude"].Active + d.ByProvider["codex"].Active) / peak * float64(eighths))
-			if tot == 0 && d.ByProvider["claude"].Active+d.ByProvider["codex"].Active > 0 {
-				tot = 1
+			// Cumulative height of each provider's segment, in eighths.
+			cum := make([]int, len(chartProviders))
+			sum := 0.0
+			for i, p := range chartProviders {
+				sum += d.ByProvider[p.id].Active
+				cum[i] = int(sum / peak * float64(eighths))
 			}
-			ca := max(0, min(8, a-base))
-			ct := max(0, min(8, tot-base))
+			tot := cum[len(cum)-1]
+			if tot == 0 && sum > 0 {
+				tot = 1
+				cum[len(cum)-1] = 1
+			}
+			t := max(0, min(8, tot-base))
 			var cell string
-			switch {
-			case ct == 0:
+			if t == 0 {
 				if r == h-1 {
 					cell = fg(cFaint).Render(strings.Repeat("▁", barW))
 				} else {
 					cell = strings.Repeat(" ", barW)
 				}
-			case ca >= 8:
-				cell = fg(cClaude).Render(strings.Repeat("█", barW))
-			case ca == 0:
-				cell = fg(cCodex).Render(strings.Repeat(string(levels[ct]), barW))
-			case ct == 8:
-				cell = lipgloss.NewStyle().Foreground(cClaude).Background(cCodex).Render(strings.Repeat(string(levels[ca]), barW))
-			default:
-				cell = fg(cClaude).Render(strings.Repeat(string(levels[ca]), barW))
+			} else {
+				// The segment at the bottom of this cell, and the one at its top.
+				lo, hi := 0, 0
+				for lo < len(cum)-1 && cum[lo] <= base {
+					lo++
+				}
+				for hi < len(cum)-1 && cum[hi] <= base+t-1 {
+					hi++
+				}
+				b := min(8, cum[lo]-base)
+				switch {
+				case lo == hi || b >= t:
+					cell = fg(chartProviders[lo].color).Render(strings.Repeat(string(levels[t]), barW))
+				case t == 8:
+					cell = lipgloss.NewStyle().Foreground(chartProviders[lo].color).Background(chartProviders[hi].color).
+						Render(strings.Repeat(string(levels[b]), barW))
+				default:
+					cell = fg(chartProviders[lo].color).Render(strings.Repeat(string(levels[b]), barW))
+				}
 			}
 			sb.WriteString(cell + strings.Repeat(" ", colW-barW))
 		}

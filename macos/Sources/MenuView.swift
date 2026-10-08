@@ -136,7 +136,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         } else if board.sessions.allSatisfy(\.stale) {
             let i = NSMenuItem(title: "No agents running", action: nil, keyEquivalent: "")
             i.isEnabled = false
-            i.setSubtitle("Start Claude Code or Codex and it shows up here")
+            i.setSubtitle("Start Claude Code, Codex or opencode and it shows up here")
             menu.addItem(i)
         } else {
             section("Needs You", board.needsYou)

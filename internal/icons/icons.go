@@ -2,11 +2,12 @@
 // artwork in hallmonitor itself. In order:
 //
 //  1. the icon of the vendor's app, if it's installed (Claude.app,
-//     Codex.app or ChatGPT.app on macOS);
+//     Codex.app, ChatGPT.app or OpenCode.app on macOS);
 //  2. a copy cached from an earlier run;
 //  3. for Claude, the Simple Icons mark from jsDelivr, pinned to one release,
 //     drawn on a brand-colored tile and cached. Simple Icons dropped OpenAI's
-//     mark in v16, so Codex instead gets a plain ">_" tile drawn locally;
+//     mark in v16, so Codex instead gets a plain ">_" tile drawn locally, and
+//     opencode a hollow block like its pixel logo;
 //  4. nothing, and the board falls back to text marks.
 package icons
 
@@ -46,6 +47,9 @@ type spec struct {
 // promptSVG is a generic terminal prompt, ">_", in a 24×24 box.
 const promptSVG = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3.3 5.6 4.9 4l7.9 8-7.9 8-1.6-1.6L9.6 12z"/><path d="M13 17.6h8.5V20H13z"/></svg>`
 
+// blockSVG is a hollow square, after opencode's pixel-block logo.
+const blockSVG = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M5 3h14v4H5z"/><path d="M5 17h14v4H5z"/><path d="M5 3h4v18H5z"/><path d="M15 3h4v18h-4z"/></svg>`
+
 var specs = map[string]spec{
 	"claude": {
 		apps: []string{"Claude.app"},
@@ -56,6 +60,11 @@ var specs = map[string]spec{
 		apps: []string{"Codex.app", "ChatGPT.app"},
 		svg:  promptSVG,
 		tile: color.RGBA{0x1f, 0x29, 0x37, 0xff}, fg: color.RGBA{0x7d, 0xd3, 0xfc, 0xff},
+	},
+	"opencode": {
+		apps: []string{"OpenCode.app"},
+		svg:  blockSVG,
+		tile: color.RGBA{0x29, 0x25, 0x24, 0xff}, fg: color.RGBA{0xe7, 0xe5, 0xe4, 0xff},
 	},
 }
 

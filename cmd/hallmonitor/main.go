@@ -20,6 +20,7 @@ import (
 	"github.com/hiteshbandhu/hallmonitor/internal/adapters/claude"
 	"github.com/hiteshbandhu/hallmonitor/internal/adapters/codex"
 	"github.com/hiteshbandhu/hallmonitor/internal/adapters/demo"
+	"github.com/hiteshbandhu/hallmonitor/internal/adapters/opencode"
 	"github.com/hiteshbandhu/hallmonitor/internal/adapters/remote"
 	"github.com/hiteshbandhu/hallmonitor/internal/hub"
 	"github.com/hiteshbandhu/hallmonitor/internal/migrate"
@@ -66,7 +67,7 @@ func main() {
 		once      = flag.Bool("once", false, "print a table and exit")
 		stream    = flag.Bool("stream", false, "print a JSON snapshot per line every --watch (used over ssh)")
 		watch     = flag.Duration("watch", 2*time.Second, "refresh interval")
-		provider  = flag.String("provider", "", "comma-separated providers (claude,codex)")
+		provider  = flag.String("provider", "", "comma-separated providers (claude,codex,opencode)")
 		cwd       = flag.String("cwd", "", "only sessions under this directory")
 		remoteCmd = flag.String("remote-cmd", "", "hallmonitor command on remote hosts (default: hallmonitor, or agentboard from before the rename)")
 		noLocal   = flag.Bool("no-local", false, "only show remote hosts")
@@ -88,10 +89,11 @@ func main() {
 	}
 
 	all := map[string]model.Adapter{
-		"claude": claude.Adapter{},
-		"codex":  codex.Adapter{},
+		"claude":   claude.Adapter{},
+		"codex":    codex.Adapter{},
+		"opencode": opencode.Adapter{},
 	}
-	order := []string{"claude", "codex"}
+	order := []string{"claude", "codex", "opencode"}
 	providers := order
 	if *provider != "" {
 		providers = nil

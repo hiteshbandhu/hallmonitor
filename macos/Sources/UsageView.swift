@@ -176,7 +176,7 @@ private struct DailyChart: View {
         f.dateFormat = "yyyy-MM-dd"
         return (s.days ?? []).flatMap { d -> [DayBar] in
             guard let day = f.date(from: d.date) else { return [] }
-            return ["claude", "codex"].map { p in
+            return ["claude", "codex", "opencode"].map { p in
                 DayBar(day: day, provider: p, hours: (d.by_provider?[p]?.active_s ?? 0) / 3600)
             }
         }
@@ -191,7 +191,8 @@ private struct DailyChart: View {
                     .cornerRadius(4)
             }
             .chartForegroundStyleScale([Provider.name("claude"): Palette.provider("claude"),
-                                        Provider.name("codex"): Palette.provider("codex")])
+                                        Provider.name("codex"): Palette.provider("codex"),
+                                        Provider.name("opencode"): Palette.provider("opencode")])
             .chartYAxis {
                 AxisMarks { v in
                     AxisGridLine().foregroundStyle(.quaternary)

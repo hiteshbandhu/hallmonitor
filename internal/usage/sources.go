@@ -2,10 +2,16 @@ package usage
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hiteshbandhu/hallmonitor/internal/opencode"
 )
 
 // ---- Claude Code ----
@@ -259,4 +265,173 @@ func firstNonEmpty(v ...string) string {
 		}
 	}
 	return ""
+}
+
+// ---- opencode ----
+
+// scanOpencode reads messages from opencode's database newer than the last
+// read: tokens and replies from assistant messages, prompts from root
+// sessions' user messages, tool calls from their parts. A reply is counted
+// once it has completed (or failed), so the cursor stops at the oldest one
+// still running. Subagent sessions roll up to their parent. Both storage
+// versions are read, each with its own cursor.
+func (l *Ledger) scanOpencode(ctx context.Context) {
+	for _, path := range opencode.DBPaths(l.Home) {
+		if ctx.Err() != nil {
+			return
+		}
+		db, err := opencode.Open(path)
+		if err != nil {
+			continue
+		}
+		fs := l.st.Files[path]
+		if fs == nil {
+			fs = &fileState{}
+			l.st.Files[path] = fs
+		}
+		if fs.Ctx == nil {
+			fs.Ctx = map[string]string{}
+		}
+		for _, v := range []ocStore{ocV1, ocV2} {
+			if opencode.HasTable(db, v.table) {
+				_ = l.scanOpencodeStore(ctx, db, fs, v)
+			}
+		}
+	}
+}
+
+// ocStore is one opencode storage version: how to read its messages and
+// their tool calls in a common shape.
+type ocStore struct {
+	table, cursor string
+	messages      string // args: after, after, afterID
+	tools         string // %s: the id placeholders
+}
+
+var ocV1 = ocStore{
+	table: "message", cursor: "",
+	messages: `SELECT m.id, m.time_created, m.session_id, COALESCE(s.parent_id, ''), s.directory,
+			COALESCE(json_extract(m.data,'$.role'),''), COALESCE(json_extract(m.data,'$.modelID'),''),
+			COALESCE(json_extract(m.data,'$.time.completed'),0), json_extract(m.data,'$.error') IS NOT NULL,
+			COALESCE(json_extract(m.data,'$.tokens.input'),0), COALESCE(json_extract(m.data,'$.tokens.output'),0),
+			COALESCE(json_extract(m.data,'$.tokens.reasoning'),0),
+			COALESCE(json_extract(m.data,'$.tokens.cache.read'),0), COALESCE(json_extract(m.data,'$.tokens.cache.write'),0)
+		FROM message m JOIN session s ON s.id = m.session_id
+		WHERE m.time_created > ? OR (m.time_created = ? AND m.id > ?)
+		ORDER BY m.time_created, m.id LIMIT 20000`,
+	tools: `SELECT message_id, json_extract(data,'$.tool') FROM part
+		WHERE message_id IN (%s) AND json_extract(data,'$.type') = 'tool'`,
+}
+
+var ocV2 = ocStore{
+	table: "session_message", cursor: "v2",
+	messages: `SELECT m.id, m.time_created, m.session_id, COALESCE(s.parent_id, ''), s.directory,
+			m.type, COALESCE(json_extract(m.data,'$.model.id'),''),
+			COALESCE(json_extract(m.data,'$.time.completed'),0), json_extract(m.data,'$.error') IS NOT NULL,
+			COALESCE(json_extract(m.data,'$.tokens.input'),0), COALESCE(json_extract(m.data,'$.tokens.output'),0),
+			COALESCE(json_extract(m.data,'$.tokens.reasoning'),0),
+			COALESCE(json_extract(m.data,'$.tokens.cache.read'),0), COALESCE(json_extract(m.data,'$.tokens.cache.write'),0)
+		FROM session_message m JOIN session s ON s.id = m.session_id
+		WHERE m.type IN ('user','assistant') AND (m.time_created > ? OR (m.time_created = ? AND m.id > ?))
+		ORDER BY m.time_created, m.id LIMIT 20000`,
+	tools: `SELECT m.id, json_extract(j.value,'$.name') FROM session_message m, json_each(m.data,'$.content') j
+		WHERE m.id IN (%s) AND json_extract(j.value,'$.type') = 'tool'`,
+}
+
+type ocMsg struct {
+	id, session, parent, dir, role, model string
+	created, completed                    int64
+	failed                                bool
+	tok                                   Tokens
+	reasoning                             int64
+}
+
+func (l *Ledger) scanOpencodeStore(ctx context.Context, db *sql.DB, fs *fileState, v ocStore) error {
+	after, _ := strconv.ParseInt(fs.Ctx[v.cursor+"at"], 10, 64)
+	afterID := fs.Ctx[v.cursor+"id"]
+	rows, err := db.QueryContext(ctx, v.messages, after, after, afterID)
+	if err != nil {
+		return err
+	}
+	var msgs []ocMsg
+	for rows.Next() {
+		var m ocMsg
+		if rows.Scan(&m.id, &m.created, &m.session, &m.parent, &m.dir, &m.role, &m.model, &m.completed, &m.failed,
+			&m.tok.Input, &m.tok.Output, &m.reasoning, &m.tok.CacheRead, &m.tok.CacheWrite) == nil {
+			msgs = append(msgs, m)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	stale := time.Now().Add(-6 * time.Hour).UnixMilli() // a reply this old never finishes
+	var done []ocMsg
+	for _, m := range msgs {
+		if m.role == "assistant" && m.completed == 0 && !m.failed && m.created > stale {
+			break
+		}
+		done = append(done, m)
+	}
+	tools := opencodeTools(ctx, db, v, done)
+	for _, m := range done {
+		session := m.session
+		if m.parent != "" {
+			session = m.parent
+		}
+		e := event{at: time.UnixMilli(m.created), provider: "opencode", session: session, project: project(m.dir), active: true}
+		switch m.role {
+		case "user":
+			if m.parent == "" {
+				e.c.Prompts = 1
+			}
+		case "assistant":
+			if m.completed > 0 {
+				e.at = time.UnixMilli(m.completed)
+			}
+			e.model = m.model
+			e.c.Tokens = m.tok
+			e.c.Tokens.Output += m.reasoning // opencode counts reasoning apart from output
+			e.c.Replies = 1
+			e.tools = tools[m.id]
+			e.c.Tools = int64(len(e.tools))
+		default:
+			continue
+		}
+		l.record(e)
+	}
+	if n := len(done); n > 0 {
+		fs.Ctx[v.cursor+"at"] = strconv.FormatInt(done[n-1].created, 10)
+		fs.Ctx[v.cursor+"id"] = done[n-1].id
+	}
+	return nil
+}
+
+// opencodeTools lists the tool calls of each assistant message.
+func opencodeTools(ctx context.Context, db *sql.DB, v ocStore, msgs []ocMsg) map[string][]string {
+	out := map[string][]string{}
+	var ids []any
+	for _, m := range msgs {
+		if m.role == "assistant" {
+			ids = append(ids, m.id)
+		}
+	}
+	for len(ids) > 0 {
+		batch := ids[:min(len(ids), 500)]
+		ids = ids[len(batch):]
+		q := fmt.Sprintf(v.tools, "?"+strings.Repeat(",?", len(batch)-1))
+		rows, err := db.QueryContext(ctx, q, batch...)
+		if err != nil {
+			return out
+		}
+		for rows.Next() {
+			var id string
+			var tool sql.NullString
+			if rows.Scan(&id, &tool) == nil && tool.String != "" {
+				out[id] = append(out[id], tool.String)
+			}
+		}
+		rows.Close()
+	}
+	return out
 }

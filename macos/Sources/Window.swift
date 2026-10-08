@@ -31,7 +31,7 @@ final class Nav: ObservableObject {
     @Published var pane: Pane = .agents
     @Published var selection: String?
     @Published var inspector = true
-    @Published var filter = "all"   // all / claude / codex
+    @Published var filter = "all"   // all / claude / codex / opencode
     @Published var search = ""
 }
 

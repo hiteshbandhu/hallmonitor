@@ -5,7 +5,7 @@
 # hallmonitor
 
 **A hall monitor for your coding agents.**
-Claude Code and Codex, on this machine and your servers, in your terminal, menu bar and notch.
+Claude Code, Codex and opencode, on this machine and your servers, in your terminal, menu bar and notch.
 
 
 
@@ -21,7 +21,7 @@ https://github.com/user-attachments/assets/0703b8dc-140a-412b-a699-1a08c8b7aa7e
 
 You start an agent, switch to something else, and ten minutes later wonder: is it done? Is it stuck waiting for approval? Which of the five terminals was it in? hallmonitor answers that at a glance:
 
-- **Who's working, who's idle, who needs you**: every Claude Code and Codex session, live.
+- **Who's working, who's idle, who needs you**: every Claude Code, Codex and opencode session, live.
 - **What each one is doing**: current tool, last prompt, model, context size, and how many subagents it has running.
 - **Across machines**: your laptop, dev box and GPU server on one board, over plain SSH.
 - **How much you use them**: agent-hours, tokens, cache hits, plan limits.
@@ -60,7 +60,7 @@ Cards are grouped into **Needs you → Working → Idle**. Working cards spin; c
 |---|---|
 | ← ↑ ↓ → | move between cards |
 | `enter` | open the agent's app (the Claude app on that session, or its terminal) |
-| `f` | filter: all / Claude / Codex |
+| `f` | filter: all / Claude / Codex / opencode |
 | `s` | show sessions idle for over a day |
 | `u` | usage & limits |
 | `q` | quit |
@@ -97,7 +97,7 @@ The app never asks for access to your folders: project icons are only looked up 
 
 ![usage](docs/usage.png)
 
-Press `u` on the board, or run `hallmonitor usage`. hallmonitor keeps a small local ledger of how you use agents, built from the logs Claude Code and Codex already write: agent-hours per day, when in the week you work, top projects, models and tools, and cache hit rate. It keeps only counts; no prompt text is stored.
+Press `u` on the board, or run `hallmonitor usage`. hallmonitor keeps a small local ledger of how you use agents, built from what Claude Code, Codex and opencode already record: agent-hours per day, when in the week you work, top projects, models and tools, and cache hit rate. It keeps only counts; no prompt text is stored.
 
 **Plan limits** show in the board's top bar and in the menu:
 
@@ -128,18 +128,21 @@ Or list hosts, one per line, in `~/.config/hallmonitor/hosts`. Each host keeps o
 |---|---|---|
 | Claude Code | `claude agents --json`, `~/.claude/sessions/*.json`, the session transcript | working, needs you (with the reason), idle, blocked |
 | Codex | live `codex` processes and their session logs; the Codex app-server when it's running | working, needs you, idle, error |
+| opencode | live `opencode` processes (the TUI, `run`, `serve`) and their sessions in opencode's database, both the classic and the v2 message store | working, needs you (when it asks a question), idle, error |
+
+opencode keeps permission prompts in memory, not in its database, so an opencode session waiting for permission shows as working; one asking a question shows as needing you.
 
 Sessions idle or blocked for more than a day are tucked away (`s` shows them).
 
 ## Terminals and logos
 
-Provider logos are drawn as real images in terminals that speak the kitty graphics protocol (Ghostty, cmux, kitty, WezTerm), and as colored ✻ Claude / >_ Codex marks elsewhere. `--images off` turns them off. Logos come from the Claude and ChatGPT apps if they're installed; otherwise Claude's mark is fetched once from Simple Icons and cached (`--no-fetch` to never touch the network).
+Provider logos are drawn as real images in terminals that speak the kitty graphics protocol (Ghostty, cmux, kitty, WezTerm), and as colored ✻ Claude / >_ Codex / ▣ opencode marks elsewhere. `--images off` turns them off. Logos come from the Claude, ChatGPT and OpenCode apps if they're installed; otherwise Claude's mark is fetched once from Simple Icons and cached (`--no-fetch` to never touch the network).
 
 ## Privacy
 
 - Local and read-only by default. No telemetry, no accounts.
 - The one exception is opt-in: with *Answer from the notch* on, the answer you click is handed back to Claude Code through its hooks. Nothing is ever sent without your click.
-- Reads session metadata and transcript tails on your machine; never your auth files or tokens.
+- Reads session metadata and transcript tails on your machine; never your auth files or tokens. opencode's database is opened read-only.
 - To read Claude plan limits it runs Claude Code's `/usage` in safe mode (no hooks, MCP servers, plugins or tools) in its own empty folder, and removes that session's transcript afterwards.
 - The usage ledger (`~/.local/share/hallmonitor/usage/`) stores counts only.
 - Remote hosts use your own SSH, and send the same metadata back.
@@ -151,7 +154,7 @@ hallmonitor [flags]
   --demo                 synthetic fleet
   --host user@host       also watch a machine over SSH (repeatable)
   --view agents|usage    screen to open on
-  --provider claude,codex
+  --provider claude,codex,opencode
   --cwd ~/code/project   only sessions under a directory
   --once | --json        print once and exit
   --images auto|kitty|blocks|off

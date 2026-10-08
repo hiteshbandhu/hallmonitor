@@ -131,6 +131,8 @@ struct Chips<T: Hashable>: View {
                 let on = value == selection
                 Text(label)
                     .font(Theme.font(12, .medium))
+                    .lineLimit(1)
+                    .fixedSize()
                     .foregroundStyle(on ? Color.white : Color.white.opacity(0.55))
                     .padding(.horizontal, 12)
                     .frame(height: 26)

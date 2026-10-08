@@ -15,7 +15,7 @@ func runFocus(ctx context.Context, args []string) {
 	fs := flag.NewFlagSet("focus", flag.ExitOnError)
 	var t focus.Target
 	fs.StringVar(&t.Host, "host", "", "machine the agent runs on (empty: this one)")
-	fs.StringVar(&t.Provider, "provider", "", "claude or codex")
+	fs.StringVar(&t.Provider, "provider", "", "claude, codex or opencode")
 	fs.StringVar(&t.ID, "id", "", "session id")
 	fs.IntVar(&t.PID, "pid", 0, "agent process id")
 	fs.StringVar(&t.Entrypoint, "entrypoint", "", "Claude Code entrypoint (claude-desktop, cli, …)")
