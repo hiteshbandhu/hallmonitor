@@ -48,8 +48,10 @@ type Proc struct {
 
 // List returns processes whose executable basename is one of names.
 func List(ctx context.Context, names ...string) ([]Proc, error) {
-	// lstart is always five fields: "Tue Sep 29 16:33:10 2026".
-	out, err := Run(ctx, "ps", "-axo", "pid=,lstart=,comm=,args=")
+	// lstart is always five fields: "Tue Sep 29 16:33:10 2026". ucomm is the
+	// executable's name; macOS cuts comm (its full path) to 16 characters
+	// when other columns follow, so /opt/homebrew/bin/codex never matched.
+	out, err := Run(ctx, "ps", "-axo", "pid=,lstart=,ucomm=,args=")
 	if err != nil {
 		return nil, err
 	}
