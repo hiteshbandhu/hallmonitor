@@ -84,6 +84,16 @@ enum SnapshotMode {
                 renderView(MainView(board: board, usage: usage, nav: nav).transaction { $0.animation = nil },
                            size: NSSize(width: 1280, height: 820), dir, "window_\(pane.rawValue)", opaque: true)
             }
+            // Each provider on its own, for announcements.
+            nav.pane = .agents
+            for p in ["claude", "codex", "opencode"] {
+                nav.filter = p
+                nav.selection = board.sessions.first(where: { $0.provider == p && $0.working })?.key
+                    ?? board.sessions.first(where: { $0.provider == p })?.key
+                renderView(MainView(board: board, usage: usage, nav: nav).transaction { $0.animation = nil },
+                           size: NSSize(width: 1280, height: 820), dir, "window_agents_\(p)", opaque: true)
+            }
+            nav.filter = "all"
             done()
         }
     }
