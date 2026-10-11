@@ -128,7 +128,7 @@ Or list hosts, one per line, in `~/.config/hallmonitor/hosts`. Each host keeps o
 |---|---|---|
 | Claude Code | `claude agents --json`, `~/.claude/sessions/*.json`, the session transcript | working, needs you (with the reason), idle, blocked |
 | Codex | live `codex` processes and their session logs; the Codex app-server when it's running | working, needs you, idle, error |
-| opencode | live `opencode` processes (the TUI, `run`, `serve`) and their sessions in opencode's database, both the classic and the v2 message store | working, needs you (when it asks a question), idle, error |
+| opencode | live `opencode` processes (the TUI, `run`, `serve`, opencode 2's background service) and their sessions in opencode's database, opencode 1 and 2 alike; opencode 2 records each running turn, so its status is exact | working, needs you (when it asks a question), idle, error |
 
 opencode keeps permission prompts in memory, not in its database, so an opencode session waiting for permission shows as working; one asking a question shows as needing you.
 

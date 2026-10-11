@@ -6,6 +6,7 @@ import (
 
 	"github.com/hiteshbandhu/hallmonitor/internal/ask"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -111,7 +112,7 @@ func Snip(s string, n int) string {
 			return string(out[:n-1]) + "…"
 		}
 	}
-	return string(out)
+	return strings.TrimRight(string(out), " ")
 }
 
 // Key identifies a session across refreshes.

@@ -48,7 +48,8 @@ func (i instance) server() bool { return i.sub == "serve" || i.sub == "web" || i
 func (a Adapter) Collect(ctx context.Context) ([]model.Session, error) {
 	pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	procs, err := proc.List(pctx, "opencode", ".opencode", "opencode-cli")
+	// opencode 2's binary is opencode.exe on every platform.
+	procs, err := proc.List(pctx, "opencode", ".opencode", "opencode.exe", "opencode-cli")
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +134,7 @@ func (a Adapter) match(ctx context.Context, insts []instance, now time.Time) ([]
 		}
 		found := false
 		for _, r := range cands {
-			if !claimed[r.ID] && r.Directory == in.cwd && !r.Updated.Before(in.Started.Add(-2*time.Second)) {
+			if !claimed[r.ID] && r.Directory == in.cwd && !r.Active().Before(in.Started.Add(-2*time.Second)) {
 				add(in, r)
 				found = true
 				break
@@ -143,14 +144,15 @@ func (a Adapter) match(ctx context.Context, insts []instance, now time.Time) ([]
 			out = append(out, placeholder(in))
 		}
 	}
-	// A server (opencode serve/web, the desktop app's sidecar) runs sessions
-	// in any folder: show what it touched since it started.
+	// A server (opencode serve/web, opencode 2's background service, the
+	// desktop app's sidecar) runs sessions in any folder: show what it
+	// touched since it started. A TUI in that folder already took its own.
 	for _, in := range insts {
 		if !in.server() {
 			continue
 		}
 		for _, r := range cands {
-			if !claimed[r.ID] && !r.Updated.Before(in.Started) {
+			if !claimed[r.ID] && !r.Active().Before(in.Started) {
 				add(in, r)
 			}
 		}
@@ -182,7 +184,8 @@ func describe(ctx context.Context, db *sql.DB, in instance, r oc.Row, now time.T
 	if r.Agent != "" {
 		s.Extra["agent"] = r.Agent
 	}
-	st, err := oc.Read(ctx, db, r.ID, now)
+	s.UpdatedAt = r.Active()
+	st, err := oc.Describe(ctx, db, r, now)
 	if err != nil {
 		return s
 	}

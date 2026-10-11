@@ -304,7 +304,7 @@ func (l *Ledger) scanOpencode(ctx context.Context) {
 // their tool calls in a common shape.
 type ocStore struct {
 	table, cursor string
-	messages      string // args: after, after, afterID
+	messages      string // args: after, after, afterID; {sessions} and {skip} filled per database
 	tools         string // %s: the id placeholders
 }
 
@@ -316,8 +316,8 @@ var ocV1 = ocStore{
 			COALESCE(json_extract(m.data,'$.tokens.input'),0), COALESCE(json_extract(m.data,'$.tokens.output'),0),
 			COALESCE(json_extract(m.data,'$.tokens.reasoning'),0),
 			COALESCE(json_extract(m.data,'$.tokens.cache.read'),0), COALESCE(json_extract(m.data,'$.tokens.cache.write'),0)
-		FROM message m JOIN session s ON s.id = m.session_id
-		WHERE m.time_created > ? OR (m.time_created = ? AND m.id > ?)
+		FROM message m JOIN {sessions} s ON s.id = m.session_id
+		WHERE (m.time_created > ? OR (m.time_created = ? AND m.id > ?)) {skip}
 		ORDER BY m.time_created, m.id LIMIT 20000`,
 	tools: `SELECT message_id, json_extract(data,'$.tool') FROM part
 		WHERE message_id IN (%s) AND json_extract(data,'$.type') = 'tool'`,
@@ -331,7 +331,7 @@ var ocV2 = ocStore{
 			COALESCE(json_extract(m.data,'$.tokens.input'),0), COALESCE(json_extract(m.data,'$.tokens.output'),0),
 			COALESCE(json_extract(m.data,'$.tokens.reasoning'),0),
 			COALESCE(json_extract(m.data,'$.tokens.cache.read'),0), COALESCE(json_extract(m.data,'$.tokens.cache.write'),0)
-		FROM session_message m JOIN session s ON s.id = m.session_id
+		FROM session_message m JOIN {sessions} s ON s.id = m.session_id
 		WHERE m.type IN ('user','assistant') AND (m.time_created > ? OR (m.time_created = ? AND m.id > ?))
 		ORDER BY m.time_created, m.id LIMIT 20000`,
 	tools: `SELECT m.id, json_extract(j.value,'$.name') FROM session_message m, json_each(m.data,'$.content') j
@@ -349,7 +349,14 @@ type ocMsg struct {
 func (l *Ledger) scanOpencodeStore(ctx context.Context, db *sql.DB, fs *fileState, v ocStore) error {
 	after, _ := strconv.ParseInt(fs.Ctx[v.cursor+"at"], 10, 64)
 	afterID := fs.Ctx[v.cursor+"id"]
-	rows, err := db.QueryContext(ctx, v.messages, after, after, afterID)
+	// opencode 2 copies v1 sessions into session_message when it migrates;
+	// those are read from there, once.
+	skip := ""
+	if v.table == "message" && opencode.HasTable(db, "session_message") {
+		skip = "AND m.session_id NOT IN (SELECT DISTINCT session_id FROM session_message)"
+	}
+	q := strings.NewReplacer("{sessions}", opencode.SessionsFrom(db), "{skip}", skip).Replace(v.messages)
+	rows, err := db.QueryContext(ctx, q, after, after, afterID)
 	if err != nil {
 		return err
 	}

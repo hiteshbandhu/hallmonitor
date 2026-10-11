@@ -93,3 +93,67 @@ func TestLedgerOpencode(t *testing.T) {
 }
 
 func itoa64(n int64) string { return strconv.FormatInt(n, 10) }
+
+// TestLedgerOpencode2: sessions only in session_v2 count, and a v1 session
+// opencode 2 migrated (its messages in both stores) counts once.
+func TestLedgerOpencode2(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("OPENCODE_DB", "")
+	home := t.TempDir()
+	dir := filepath.Join(home, ".local", "share", "opencode")
+	os.MkdirAll(dir, 0o755)
+	db, err := sql.Open("sqlite", filepath.Join(dir, "opencode.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	at := func(sec int) int64 { return base.Add(time.Duration(sec) * time.Second).UnixMilli() }
+	reply := func(in int, done int64) string {
+		return `{"role":"assistant","modelID":"m","model":{"id":"m"},"time":{"completed":` + itoa64(done) + `},"tokens":{"input":` +
+			strconv.Itoa(in) + `,"output":1,"reasoning":0,"cache":{"read":0,"write":0}}}`
+	}
+	for _, q := range []string{
+		`CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT)`,
+		`CREATE TABLE session_v2 (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT)`,
+		`CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT)`,
+		`CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT)`,
+		`CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, data TEXT)`,
+		`INSERT INTO session VALUES ('ses_m', NULL, '/z/app')`,
+		`INSERT INTO session_v2 VALUES ('ses_m', NULL, '/z/app'), ('ses_new', NULL, '/z/api')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(q, err)
+		}
+	}
+	for _, r := range []struct {
+		q    string
+		args []any
+	}{
+		// Migrated: the same reply in both stores.
+		{`INSERT INTO message VALUES ('msg_1','ses_m',?,?)`, []any{at(0), reply(100, at(5))}},
+		{`INSERT INTO session_message VALUES ('msg_1','ses_m','assistant',1,?,?)`, []any{at(0), reply(100, at(5))}},
+		// New, only in session_v2.
+		{`INSERT INTO session_message VALUES ('msg_2','ses_new','assistant',1,?,?)`, []any{at(10), reply(7, at(12))}},
+	} {
+		if _, err := db.Exec(r.q, r.args...); err != nil {
+			t.Fatal(r.q, err)
+		}
+	}
+	l := &Ledger{Dir: filepath.Join(home, "ledger"), Home: home}
+	if err := l.Update(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	d := l.day(base.Local().Format("2006-01-02"))
+	var oc Counters
+	for k, c := range d.Buckets {
+		if contains(k, "|opencode|") {
+			oc.Add(*c)
+		}
+	}
+	if oc.Replies != 2 || oc.Tokens.Input != 107 {
+		t.Errorf("counts = %+v, want 2 replies and 107 input tokens", oc)
+	}
+	if _, ok := d.Sessions["ses_new"]; !ok {
+		t.Error("session_v2-only session missing")
+	}
+}

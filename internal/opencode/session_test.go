@@ -133,3 +133,79 @@ func TestReadV2(t *testing.T) {
 		t.Fatal("DefaultTitle")
 	}
 }
+
+// TestOpencode2 is opencode 2's layout: sessions in session_v2 (with old ones
+// migrated into both tables), each turn's claim and end on the session row,
+// idle rows ending turns, and session_pending for queued prompts.
+func TestOpencode2(t *testing.T) {
+	w, path := fixture(t)
+	now := time.Now()
+	ms := func(ago time.Duration) int64 { return now.Add(-ago).UnixMilli() }
+	for _, q := range []string{
+		`CREATE TABLE session_v2 (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, slug TEXT, directory TEXT,
+			title TEXT, version TEXT, agent TEXT, model TEXT, time_created INTEGER, time_updated INTEGER, time_archived INTEGER,
+			time_compacting INTEGER, time_suspended INTEGER, time_idle INTEGER, idle_outcome TEXT)`,
+		`CREATE TABLE session_pending (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, data TEXT, delivery TEXT, admitted_seq INTEGER, time_created INTEGER)`,
+	} {
+		exec(t, w, q)
+	}
+	// An old session, migrated: in both tables.
+	exec(t, w, `INSERT INTO session VALUES ('ses_old','p',NULL,'s','/code/app','old','1.2.10','build',NULL,?,?,NULL)`, ms(2*time.Hour), ms(2*time.Hour))
+	exec(t, w, `INSERT INTO session_v2 VALUES ('ses_old','p',NULL,'s','/code/app','old','1.2.10','build',NULL,?,?,NULL,NULL,NULL,NULL,NULL)`, ms(2*time.Hour), ms(2*time.Hour))
+	// A new one, only in session_v2, running a turn (claimed) with a
+	// subagent running too.
+	exec(t, w, `INSERT INTO session_v2 VALUES ('ses_new','p',NULL,'s','/code/api',NULL,'2.0.25','build','{"id":"big-pickle","providerID":"opencode"}',?,?,NULL,NULL,?,?,'succeeded')`,
+		ms(time.Hour), ms(10*time.Minute), ms(30*time.Second), ms(5*time.Minute))
+	exec(t, w, `INSERT INTO session_v2 VALUES ('ses_kid','p','ses_new','s','/code/api','Map the routes (@explore subagent)','2.0.25','explore',NULL,?,?,NULL,NULL,?,NULL,NULL)`,
+		ms(20*time.Second), ms(20*time.Second), ms(20*time.Second))
+	exec(t, w, `INSERT INTO session_message VALUES ('m1','ses_new','user',1,?,?,'{"text":"add rate limits\n"}')`, ms(31*time.Second), ms(31*time.Second))
+	exec(t, w, `INSERT INTO session_message VALUES ('m2','ses_new','assistant',2,?,?,?)`, ms(29*time.Second), ms(29*time.Second),
+		`{"model":{"id":"big-pickle"},"content":[{"type":"tool","name":"read","state":{"status":"completed","input":{"path":"/code/api/limit.go"}}}],"time":{"created":1}}`)
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	rows, err := Sessions(ctx, db, now.Add(-3*time.Hour))
+	if err != nil || len(rows) != 2 || rows[0].ID != "ses_new" || rows[0].Model != "big-pickle" || rows[0].Title != "" {
+		t.Fatalf("sessions = %+v, %v", rows, err)
+	}
+	r := rows[0]
+	if r.Claimed.IsZero() || r.Active().Before(now.Add(-time.Minute)) {
+		t.Fatalf("row = %+v", r)
+	}
+	st, err := Describe(ctx, db, r, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Status != model.StatusBusy || st.Prompt != "add rate limits" || st.Last != "read · limit.go" {
+		t.Fatalf("running: %+v", st)
+	}
+	if st.Sub == nil || st.Sub.Total != 1 || st.Sub.Running != 1 || st.Sub.Active[0] != "Map the routes" {
+		t.Fatalf("subagents: %+v", st.Sub)
+	}
+
+	// The turn ends: released, an idle row, the session row says how.
+	exec(t, w, `UPDATE session_v2 SET time_suspended = NULL, time_idle = ?, idle_outcome = 'failed' WHERE id = 'ses_new'`, ms(time.Second))
+	exec(t, w, `INSERT INTO session_message VALUES ('m3','ses_new','idle',3,?,?,'{"outcome":"failed"}')`, ms(time.Second), ms(time.Second))
+	r, _ = Session(ctx, db, "ses_new")
+	if st, _ = Describe(ctx, db, r, now); st.Status != model.StatusError || st.Last != "error: turn failed" {
+		t.Fatalf("failed: %+v", st)
+	}
+	exec(t, w, `UPDATE session_v2 SET idle_outcome = 'interrupted' WHERE id = 'ses_new'`)
+	exec(t, w, `UPDATE session_message SET data = '{"outcome":"interrupted"}' WHERE id = 'm3'`)
+	r, _ = Session(ctx, db, "ses_new")
+	if st, _ = Describe(ctx, db, r, now); st.Status != model.StatusIdle || st.Last != "turn interrupted" {
+		t.Fatalf("interrupted: %+v", st)
+	}
+	// A prompt waiting in session_pending.
+	exec(t, w, `INSERT INTO session_pending VALUES ('p1','ses_new','user','{}','queue',4,?)`, ms(0))
+	if st, _ = Read(ctx, db, "ses_new", now); st.Status != model.StatusBusy {
+		t.Fatalf("queued: %+v", st)
+	}
+	// The migrated session reads once, from session_v2.
+	if r, err := Session(ctx, db, "ses_old"); err != nil || r.Version != "1.2.10" {
+		t.Fatalf("old: %+v %v", r, err)
+	}
+}

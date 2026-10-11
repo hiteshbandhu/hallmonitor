@@ -15,24 +15,104 @@ import (
 type Row struct {
 	ID, Title, Directory, ParentID, Model, Agent, Version string
 	Created, Updated                                      time.Time
+	// opencode 2 records each turn in the session row: Claimed is set while
+	// a turn runs (and stays set if opencode died mid-turn, for resuming),
+	// Idle when it ended, with its Outcome: succeeded, failed or
+	// interrupted. Compacting is set while it summarizes the context.
+	Claimed, Idle, Compacting time.Time
+	Outcome                   string
 }
 
-const sessionCols = `id, title, directory, COALESCE(parent_id,''), COALESCE(json_extract(model,'$.id'),''),
-	COALESCE(agent,''), version, time_created, time_updated`
+const sessionCols = `id, COALESCE(title,''), directory, COALESCE(parent_id,''), COALESCE(json_extract(model,'$.id'),''),
+	COALESCE(agent,''), version, time_created, time_updated,
+	COALESCE(time_suspended,0), COALESCE(time_idle,0), COALESCE(idle_outcome,''), COALESCE(time_compacting,0)`
+
+// sessionsFrom is the session table as one relation. opencode 2 moved
+// sessions to session_v2 (its v1 migration copies the old ones over, and new
+// ones live only there); older versions only have session. Columns a version
+// lacks read as NULL.
+func sessionsFrom(db *sql.DB) string {
+	sel := func(table string) string {
+		have := columns(db, table)
+		var b []string
+		for _, c := range []string{"id", "title", "directory", "parent_id", "model", "agent", "version",
+			"time_created", "time_updated", "time_archived", "time_compacting", "time_suspended", "time_idle", "idle_outcome"} {
+			if have[c] {
+				b = append(b, c)
+			} else {
+				b = append(b, "NULL AS "+c)
+			}
+		}
+		return "SELECT " + strings.Join(b, ", ") + " FROM " + table
+	}
+	v1, v2 := HasTable(db, "session"), HasTable(db, "session_v2")
+	switch {
+	case v1 && v2:
+		return "(" + sel("session_v2") + " UNION ALL " + sel("session") + " WHERE id NOT IN (SELECT id FROM session_v2))"
+	case v2:
+		return "(" + sel("session_v2") + ")"
+	}
+	return "(" + sel("session") + ")"
+}
+
+// columns are table's column names.
+func columns(db *sql.DB, table string) map[string]bool {
+	out := map[string]bool{}
+	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var n string
+		if rows.Scan(&n) == nil {
+			out[n] = true
+		}
+	}
+	return out
+}
+
+// SessionsFrom is sessionsFrom for the usage ledger.
+func SessionsFrom(db *sql.DB) string { return sessionsFrom(db) }
+
+// Active is the session's latest activity: opencode 2 holds time_updated
+// still while it claims and releases a session for a turn.
+func (r Row) Active() time.Time {
+	t := r.Updated
+	for _, v := range []time.Time{r.Claimed, r.Idle} {
+		if v.After(t) {
+			t = v
+		}
+	}
+	return t
+}
 
 func scanRow(sc interface{ Scan(...any) error }) (Row, error) {
 	var r Row
-	var c, u int64
-	err := sc.Scan(&r.ID, &r.Title, &r.Directory, &r.ParentID, &r.Model, &r.Agent, &r.Version, &c, &u)
+	var c, u, claimed, idle, compacting int64
+	err := sc.Scan(&r.ID, &r.Title, &r.Directory, &r.ParentID, &r.Model, &r.Agent, &r.Version, &c, &u,
+		&claimed, &idle, &r.Outcome, &compacting)
 	r.Created, r.Updated = time.UnixMilli(c), time.UnixMilli(u)
+	r.Claimed, r.Idle, r.Compacting = ms(claimed), ms(idle), ms(compacting)
 	return r, err
 }
 
-// Sessions are the root, unarchived sessions updated since since, newest first.
+func ms(v int64) time.Time {
+	if v <= 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(v)
+}
+
+// Sessions are the root, unarchived sessions updated since since, newest
+// first. A turn running now counts as updated: opencode doesn't move
+// time_updated for its bookkeeping.
 func Sessions(ctx context.Context, db *sql.DB, since time.Time) ([]Row, error) {
-	rows, err := db.QueryContext(ctx, `SELECT `+sessionCols+` FROM session
-		WHERE parent_id IS NULL AND time_archived IS NULL AND time_updated >= ?
-		ORDER BY time_updated DESC LIMIT 200`, since.UnixMilli())
+	rows, err := db.QueryContext(ctx, `SELECT `+sessionCols+` FROM `+sessionsFrom(db)+`
+		WHERE parent_id IS NULL AND time_archived IS NULL
+		AND (time_updated >= ? OR time_suspended >= ? OR time_idle >= ?)
+		ORDER BY max(time_updated, COALESCE(time_suspended,0), COALESCE(time_idle,0)) DESC LIMIT 200`,
+		since.UnixMilli(), since.UnixMilli(), since.UnixMilli())
 	if err != nil {
 		return nil, err
 	}
@@ -50,14 +130,52 @@ func Sessions(ctx context.Context, db *sql.DB, since time.Time) ([]Row, error) {
 
 // Session reads one session row.
 func Session(ctx context.Context, db *sql.DB, id string) (Row, error) {
-	return scanRow(db.QueryRowContext(ctx, `SELECT `+sessionCols+` FROM session WHERE id = ?`, id))
+	return scanRow(db.QueryRowContext(ctx, `SELECT `+sessionCols+` FROM `+sessionsFrom(db)+` WHERE id = ?`, id))
 }
 
 // Latest is the newest root session in dir, for `opencode --continue`.
 func Latest(ctx context.Context, db *sql.DB, dir string) (Row, error) {
-	return scanRow(db.QueryRowContext(ctx, `SELECT `+sessionCols+` FROM session
+	return scanRow(db.QueryRowContext(ctx, `SELECT `+sessionCols+` FROM `+sessionsFrom(db)+`
 		WHERE parent_id IS NULL AND time_archived IS NULL AND directory = ?
 		ORDER BY time_updated DESC LIMIT 1`, dir))
+}
+
+// Children counts a session's subagents (child sessions) and what the
+// running ones (claimed by a turn) are doing. Only opencode 2 records
+// running children; older versions fall back to the task tool's state.
+func Children(ctx context.Context, db *sql.DB, id string) *model.Subagents {
+	if !HasTable(db, "session_v2") {
+		return nil
+	}
+	rows, err := db.QueryContext(ctx, `SELECT COALESCE(title,''), time_suspended IS NOT NULL FROM session_v2
+		WHERE parent_id = ? ORDER BY time_created DESC`, id)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var sub model.Subagents
+	for rows.Next() {
+		var title string
+		var running bool
+		if rows.Scan(&title, &running) != nil {
+			continue
+		}
+		sub.Total++
+		if running {
+			sub.Running++
+			if len(sub.Active) < 3 {
+				// "Map the webhooks (@explore subagent)" -> "Map the webhooks"
+				if i := strings.LastIndex(title, " (@"); i > 0 {
+					title = title[:i]
+				}
+				sub.Active = append(sub.Active, model.Snip(title, 60))
+			}
+		}
+	}
+	if sub.Total == 0 {
+		return nil
+	}
+	return &sub
 }
 
 // State is what the board shows for a session, read from its newest
@@ -85,6 +203,72 @@ func Read(ctx context.Context, db *sql.DB, id string, now time.Time) (State, err
 		}
 	}
 	return readV1(ctx, db, id, now)
+}
+
+// Describe is Read plus what the session row knows: opencode 2's record of
+// the running turn, how the last one ended, compaction and subagents.
+func Describe(ctx context.Context, db *sql.DB, r Row, now time.Time) (State, error) {
+	st, err := Read(ctx, db, r.ID, now)
+	if err != nil {
+		return st, err
+	}
+	applyLifecycle(&st, r, now)
+	if sub := Children(ctx, db, r.ID); sub != nil {
+		st.Sub = sub
+	}
+	return st, nil
+}
+
+func applyLifecycle(st *State, r Row, now time.Time) {
+	running := !r.Claimed.IsZero() && (r.Idle.IsZero() || r.Claimed.After(r.Idle))
+	switch {
+	case running:
+		if st.Status != model.StatusWaiting {
+			st.Status = model.StatusBusy
+			st.Since = r.Claimed
+		}
+	case !r.Idle.IsZero() && !(st.Status == model.StatusBusy && st.Since.After(r.Idle)):
+		// The turn ended; a busy guess from an unfinished message is stale
+		// unless something newer than the end started a turn.
+		st.Since = r.Idle
+		switch r.Outcome {
+		case "failed":
+			st.Status = model.StatusError
+			if !strings.HasPrefix(st.Last, "error: ") {
+				st.Last = "error: turn failed"
+			}
+		case "interrupted":
+			st.Status, st.Last = model.StatusIdle, "turn interrupted"
+		default:
+			if st.Status != model.StatusError {
+				st.Status = model.StatusIdle
+			}
+		}
+	}
+	// Compacting is set while it runs; an old value means it never cleared.
+	if !r.Compacting.IsZero() && now.Sub(r.Compacting) < 30*time.Minute {
+		st.Status, st.Last = model.StatusBusy, "compacting context"
+	}
+}
+
+// queued reports whether a prompt is waiting to become a message: opencode
+// 2's session_pending and session_inbox, or session_input in the versions
+// between.
+func queued(ctx context.Context, db *sql.DB, id string) bool {
+	for _, q := range []struct{ table, where string }{
+		{"session_pending", ""},
+		{"session_inbox", ""},
+		{"session_input", " AND promoted_seq IS NULL"},
+	} {
+		if !HasTable(db, q.table) {
+			continue
+		}
+		var n int
+		if db.QueryRowContext(ctx, `SELECT count(*) FROM `+q.table+` WHERE session_id = ?`+q.where, id).Scan(&n) == nil && n > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // ---- v1: message + part ----
@@ -210,7 +394,7 @@ func readV1(ctx context.Context, db *sql.DB, id string, now time.Time) (State, e
 	prows, err := db.QueryContext(ctx, `SELECT time_created, time_updated,
 			COALESCE(json_extract(data,'$.type'),''), COALESCE(json_extract(data,'$.tool'),''),
 			COALESCE(json_extract(data,'$.state.status'),''), COALESCE(json_extract(data,'$.state.title'),''),
-			COALESCE(json_extract(data,'$.state.input.description'), json_extract(data,'$.state.input.filePath'),
+			COALESCE(json_extract(data,'$.state.input.description'), json_extract(data,'$.state.input.filePath'), json_extract(data,'$.state.input.path'),
 				json_extract(data,'$.state.input.pattern'), json_extract(data,'$.state.input.url'),
 				json_extract(data,'$.state.input.query'), json_extract(data,'$.state.input.command'),
 				json_extract(data,'$.state.input.questions[0].question'), '')
@@ -272,7 +456,7 @@ func applyParts(st *State, parts []part, now time.Time) {
 		}
 		line := toolLine(p.tool, p.title, p.hint)
 		st.Last = line
-		if p.tool == "task" {
+		if p.tool == "task" || p.tool == "subagent" {
 			sub.Total++
 			if p.status == "running" || p.status == "pending" {
 				sub.Running++
@@ -316,8 +500,9 @@ func toolLine(tool, title, hint string) string {
 // ---- v2: session_message ----
 
 type v2Message struct {
-	Text  string `json:"text"`
-	Model struct {
+	Text    string `json:"text"`
+	Outcome string `json:"outcome"` // idle: succeeded, failed or interrupted
+	Model   struct {
 		ID string `json:"id"`
 	} `json:"model"`
 	Content []struct {
@@ -350,7 +535,7 @@ type v2Message struct {
 func readV2(ctx context.Context, db *sql.DB, id string, now time.Time) (State, error) {
 	st := State{Status: model.StatusIdle}
 	rows, err := db.QueryContext(ctx, `SELECT type, time_created, data FROM session_message
-		WHERE session_id = ? AND type IN ('user','assistant','shell') ORDER BY seq DESC LIMIT 12`, id)
+		WHERE session_id = ? AND type IN ('user','assistant','shell','idle') ORDER BY seq DESC LIMIT 12`, id)
 	if err != nil {
 		return st, err
 	}
@@ -413,12 +598,36 @@ func readV2(ctx context.Context, db *sql.DB, id string, now time.Time) (State, e
 	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
 		parts[i], parts[j] = parts[j], parts[i]
 	}
+	if !gotUser {
+		// A long agentic turn can push the prompt past the rows above.
+		var text string
+		if db.QueryRowContext(ctx, `SELECT substr(COALESCE(json_extract(data,'$.text'),''), 1, 400) FROM session_message
+			WHERE session_id = ? AND type = 'user' ORDER BY seq DESC LIMIT 1`, id).Scan(&text) == nil {
+			st.Prompt = model.Snip(text, 120)
+		}
+	}
 
 	if len(msgs) > 0 {
 		r := msgs[0]
 		switch {
 		case r.typ == "user":
 			st.Status, st.Since = model.StatusBusy, r.created
+		case r.typ == "idle": // opencode 2 marks the end of every turn
+			st.Since = r.created
+			switch r.m.Outcome {
+			case "failed":
+				st.Status, st.Last = model.StatusError, "error: turn failed"
+				for _, prev := range msgs[1:] {
+					if prev.typ == "assistant" {
+						if prev.m.Error != nil && prev.m.Error.Message != "" {
+							st.Last = "error: " + model.Snip(prev.m.Error.Message, 110)
+						}
+						break
+					}
+				}
+			case "interrupted":
+				st.Last = "turn interrupted"
+			}
 		case r.typ == "assistant" && r.m.Error != nil:
 			st.Status = model.StatusError
 			st.Last = "error: " + model.Snip(r.m.Error.Message, 110)
@@ -432,11 +641,8 @@ func readV2(ctx context.Context, db *sql.DB, id string, now time.Time) (State, e
 		}
 	}
 	// Input accepted but not yet turned into a message: queued or starting.
-	if st.Status != model.StatusBusy && HasTable(db, "session_input") {
-		var n int
-		if db.QueryRowContext(ctx, `SELECT count(*) FROM session_input WHERE session_id = ? AND promoted_seq IS NULL`, id).Scan(&n) == nil && n > 0 {
-			st.Status = model.StatusBusy
-		}
+	if st.Status != model.StatusBusy && queued(ctx, db, id) {
+		st.Status = model.StatusBusy
 	}
 	last := st.Last
 	applyParts(&st, parts, now)
@@ -451,7 +657,7 @@ func inputHint(raw json.RawMessage) string {
 	if json.Unmarshal(raw, &in) != nil {
 		return ""
 	}
-	for _, k := range []string{"description", "filePath", "pattern", "url", "query", "command"} {
+	for _, k := range []string{"description", "filePath", "path", "pattern", "url", "query", "command"} {
 		if v, ok := in[k].(string); ok && v != "" {
 			return v
 		}
