@@ -27,6 +27,7 @@ struct PendingAsk: Decodable, Hashable {
     var questions: [AskQuestion]?
     var tool: String?
     var detail: String?
+    var complete: Bool?
     var deadline: Date?
 }
 
@@ -206,16 +207,23 @@ struct AskCard: View {
             Text(ask.detail ?? "")
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.9))
-                .lineLimit(14)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
                 .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(.white.opacity(0.07)))
                 .textSelection(.enabled)
             HStack(spacing: 8) {
+                if ask.complete != true {
+                    // Allow approves all of it; only offer it when all of it is shown.
+                    Text("Too long to show in full: allow it in Claude")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.5))
+                }
                 Spacer()
                 Button("Deny") { finish("deny") }.buttonStyle(NotchButton(kind: .secondary))
-                Button("Allow") { finish("allow") }.buttonStyle(NotchButton(kind: .primary))
+                if ask.complete == true {
+                    Button("Allow") { finish("allow") }.buttonStyle(NotchButton(kind: .primary))
+                }
             }
         }
     }

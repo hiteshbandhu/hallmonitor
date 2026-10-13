@@ -17,7 +17,6 @@ import (
 
 	"github.com/hiteshbandhu/hallmonitor/internal/ask"
 	"github.com/hiteshbandhu/hallmonitor/internal/migrate"
-	"github.com/hiteshbandhu/hallmonitor/internal/model"
 )
 
 // How long a question waits in the notch before Claude Code asks the usual way.
@@ -86,7 +85,7 @@ func hook() {
 	case h.Event == "PermissionRequest" && !interactive[h.Tool]:
 		a.Kind = ask.KindPermission
 		a.Tool = h.Tool
-		a.Detail = permissionDetail(h.Tool, h.ToolInput)
+		a.Detail, a.Complete = permissionDetail(h.Tool, h.ToolInput)
 	default:
 		return
 	}
@@ -136,6 +135,8 @@ func hookOutput(event string, a ask.Ask, questions json.RawMessage, ans ask.Answ
 			"permissionDecisionReason": "Answered in Hall Monitor",
 			"updatedInput":             map[string]any{"questions": questions, "answers": answers},
 		}}
+	case event == "PermissionRequest" && ans.Action == "allow" && !a.Complete:
+		return nil // you couldn't see all of it: Claude asks as usual
 	case event == "PermissionRequest" && (ans.Action == "allow" || ans.Action == "deny"):
 		d := map[string]any{"behavior": ans.Action}
 		if ans.Action == "deny" {
@@ -146,21 +147,20 @@ func hookOutput(event string, a ask.Ask, questions json.RawMessage, ans ask.Answ
 	return nil // "pass": the usual prompt
 }
 
-// permissionDetail says what the tool wants to do: its command, file or
-// URL, or else its inputs as "key: value" lines, never raw JSON.
-func permissionDetail(tool string, input json.RawMessage) string {
+// maxDetail is how much of a tool's input the notch shows. Allow approves
+// all of it, so anything longer isn't offered for allowing there.
+const maxDetail = 2000
+
+// permissionDetail is everything the tool wants to do: a shell command as
+// written, otherwise every input as a "key: value" line. complete is false
+// when it didn't fit; then only Deny or Claude's own prompt are offered.
+func permissionDetail(tool string, input json.RawMessage) (detail string, complete bool) {
 	var m map[string]any
-	_ = json.Unmarshal(input, &m)
-	for _, k := range []string{"command", "file_path", "notebook_path", "url", "pattern", "path", "query", "prompt", "description"} {
-		if v, ok := m[k].(string); ok && strings.TrimSpace(v) != "" {
-			if k == "file_path" || k == "notebook_path" || k == "path" {
-				return filepath.Base(v)
-			}
-			if k == "command" {
-				return clip(strings.TrimSpace(v), 600) // a script reads better on its own lines
-			}
-			return model.Snip(strings.TrimSpace(v), 600)
-		}
+	if json.Unmarshal(input, &m) != nil {
+		return fit(string(input))
+	}
+	if cmd, ok := m["command"].(string); ok && (tool == "Bash" || len(m) == 1 || (len(m) == 2 && m["description"] != nil)) {
+		return fit(strings.TrimSpace(cmd))
 	}
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -169,31 +169,22 @@ func permissionDetail(tool string, input json.RawMessage) string {
 	sort.Strings(keys)
 	var lines []string
 	for _, k := range keys {
-		var v string
-		switch x := m[k].(type) {
-		case string:
-			v = strings.Join(strings.Fields(x), " ")
-		case nil:
-			continue
-		default:
-			b, _ := json.Marshal(x)
+		v, ok := m[k].(string)
+		if !ok {
+			b, _ := json.Marshal(m[k])
 			v = string(b)
 		}
-		lines = append(lines, k+": "+model.Snip(v, 120))
-		if len(lines) == 6 {
-			break
-		}
+		lines = append(lines, k+": "+v)
 	}
-	return strings.Join(lines, "\n")
+	return fit(strings.Join(lines, "\n"))
 }
 
-// clip trims s to n runes, keeping its lines.
-func clip(s string, n int) string {
+func fit(s string) (string, bool) {
 	r := []rune(s)
-	if len(r) <= n {
-		return s
+	if len(r) <= maxDetail {
+		return s, true
 	}
-	return strings.TrimRight(string(r[:n-1]), " \n") + "…"
+	return string(r[:maxDetail-1]) + "…", false
 }
 
 func newID() string {

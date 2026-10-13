@@ -49,6 +49,7 @@ type Ask struct {
 	Questions []Question `json:"questions,omitempty"` // KindQuestion
 	Tool      string     `json:"tool,omitempty"`      // KindPermission: the tool, e.g. "Bash"
 	Detail    string     `json:"detail,omitempty"`    // KindPermission: what it wants to do
+	Complete  bool       `json:"complete,omitempty"`  // KindPermission: Detail is all of it, so it may be allowed
 	PID       int        `json:"pid,omitempty"`       // the waiting hook; when it's gone, so is the question
 	At        time.Time  `json:"at"`
 	Deadline  time.Time  `json:"deadline"`
