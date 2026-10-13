@@ -87,7 +87,7 @@ On a MacBook, hallmonitor lives around the notch: small ears show who's working,
 
 The menu bar item is a regular macOS menu: agents with their project and status, today's usage, plan limits, and shortcuts to open the board. You also get a notification when an agent needs you.
 
-Settings let you turn the notch, notifications, the agent count and plan usage in the menu bar on or off, and launch at login.
+Settings let you turn the notch, notifications, the menu bar item itself, the agent count and plan usage in it on or off, and launch at login. With the menu bar item off, open Hall Monitor from Spotlight or Finder to get its window, and Settings (⌘,) from there.
 
 The app never asks for access to your folders: project icons are only looked up inside project folders, and never in Desktop, Documents, Downloads or Library.
 

@@ -42,6 +42,9 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     func refresh() { updateButton() }
 
     private func updateButton() {
+        // The menu bar item can be turned off; the app still opens from
+        // Spotlight or Finder, and Settings from its window.
+        item.isVisible = UserDefaults.standard.bool(forKey: "showMenuBar")
         guard let button = item.button else { return }
         let waiting = board.needsYou.count
         let busy = board.working.count
@@ -374,6 +377,7 @@ func statusWord(_ s: String) -> String {
 struct SettingsView: View {
     @AppStorage("notch") private var notch = true
     @AppStorage("notify") private var notify = true
+    @AppStorage("showMenuBar") private var showMenuBar = true
     @AppStorage("showCount") private var showCount = false
     @AppStorage("showLimit") private var showLimit = true
     @AppStorage("probeLimits") private var probeLimits = true
@@ -385,8 +389,18 @@ struct SettingsView: View {
             Section {
                 Toggle("Show agents around the notch", isOn: $notch)
                 Toggle("Notify when an agent needs you or finishes", isOn: $notify)
+            }
+            Section {
+                Toggle("Show Hall Monitor in the menu bar", isOn: $showMenuBar)
                 Toggle("Show agent count in the menu bar", isOn: $showCount)
+                    .disabled(!showMenuBar)
                 Toggle("Show plan usage in the menu bar", isOn: $showLimit)
+                    .disabled(!showMenuBar)
+            } footer: {
+                if !showMenuBar {
+                    Text("To get back here, open Hall Monitor again from Spotlight or Finder and choose Settings… (⌘,).")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
             Section {
                 Toggle("Answer Claude’s questions from the notch", isOn: $answerFromNotch)
