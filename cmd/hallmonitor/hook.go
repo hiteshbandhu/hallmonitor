@@ -196,37 +196,111 @@ func permissionDetail(tool string, input json.RawMessage) (detail string, comple
 var plainKey = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 // decodeInput reads a tool input the way Claude Code does, refusing what
-// could read two ways: a key given twice, or anything but an object.
-// Numbers keep their exact digits.
+// could read two ways: a key given twice at any depth, an escape that
+// isn't a whole character (JavaScript keeps a lone surrogate, Go doesn't),
+// or anything but one object. Numbers keep their exact digits.
 func decodeInput(input json.RawMessage) (map[string]any, bool) {
-	d := json.NewDecoder(bytes.NewReader(input))
-	d.UseNumber()
-	if t, err := d.Token(); err != nil || t != json.Delim('{') {
+	if loneSurrogate(input) {
 		return nil, false
 	}
-	m := map[string]any{}
-	for d.More() {
-		t, err := d.Token()
-		k, isKey := t.(string)
-		if err != nil || !isKey {
-			return nil, false
-		}
-		if _, dup := m[k]; dup {
-			return nil, false
-		}
-		var v any
-		if d.Decode(&v) != nil {
-			return nil, false
-		}
-		m[k] = v
-	}
-	if t, err := d.Token(); err != nil || t != json.Delim('}') {
+	d := json.NewDecoder(bytes.NewReader(input))
+	d.UseNumber()
+	v, ok := strictValue(d)
+	if !ok {
 		return nil, false
 	}
 	if _, err := d.Token(); err != io.EOF {
 		return nil, false
 	}
-	return m, true
+	m, isObj := v.(map[string]any)
+	return m, isObj
+}
+
+// loneSurrogate reports a \uD800-\uDFFF escape that isn't half of a
+// high-low pair.
+func loneSurrogate(b []byte) bool {
+	hex4 := func(i int) (rune, bool) {
+		if i+6 > len(b) || b[i] != '\\' || b[i+1] != 'u' {
+			return 0, false
+		}
+		var r rune
+		for _, c := range b[i+2 : i+6] {
+			switch {
+			case c >= '0' && c <= '9':
+				r = r<<4 | rune(c-'0')
+			case c >= 'a' && c <= 'f':
+				r = r<<4 | rune(c-'a'+10)
+			case c >= 'A' && c <= 'F':
+				r = r<<4 | rune(c-'A'+10)
+			default:
+				return 0, false
+			}
+		}
+		return r, true
+	}
+	for i := 0; i < len(b); i++ {
+		if b[i] != '\\' {
+			continue
+		}
+		r, ok := hex4(i)
+		if !ok {
+			i++ // \\, \" and the like: skip the escaped character
+			continue
+		}
+		switch {
+		case r >= 0xD800 && r <= 0xDBFF:
+			lo, ok := hex4(i + 6)
+			if !ok || lo < 0xDC00 || lo > 0xDFFF {
+				return true
+			}
+			i += 11
+		case r >= 0xDC00 && r <= 0xDFFF:
+			return true
+		default:
+			i += 5
+		}
+	}
+	return false
+}
+
+func strictValue(d *json.Decoder) (any, bool) {
+	t, err := d.Token()
+	if err != nil {
+		return nil, false
+	}
+	switch t {
+	case json.Delim('{'):
+		m := map[string]any{}
+		for d.More() {
+			kt, err := d.Token()
+			k, isKey := kt.(string)
+			if err != nil || !isKey {
+				return nil, false
+			}
+			if _, dup := m[k]; dup {
+				return nil, false
+			}
+			v, ok := strictValue(d)
+			if !ok {
+				return nil, false
+			}
+			m[k] = v
+		}
+		_, err := d.Token()
+		return m, err == nil
+	case json.Delim('['):
+		var a []any
+		for d.More() {
+			v, ok := strictValue(d)
+			if !ok {
+				return nil, false
+			}
+			a = append(a, v)
+		}
+		_, err := d.Token()
+		return a, err == nil
+	}
+	return t, true
 }
 
 // visible spells out characters that would hide or reorder text on screen:

@@ -60,6 +60,10 @@ func TestPermissionDetail(t *testing.T) {
 		{"mcp__x__pay", `{"amount":9007199254740993}`, "amount: 9007199254740993", true},
 		// Hidden or reordering characters are spelled out.
 		{"Bash", "{\"command\":\"echo hi \u202erm -rf ~\"}", `echo hi \u{202E}rm -rf ~`, true},
+		// An escaped backslash before a u isn't an escape.
+		{"mcp__x__say", `{"text":"C:\\udc00"}`, `text: "C:\\udc00"`, true},
+		// A whole surrogate pair is one character, and fine.
+		{"mcp__x__say", `{"text":"\ud83d\ude00","n":[1,{"k":"v"}]}`, "n: [1,{\"k\":\"v\"}]\ntext: \"😀\"", true},
 	}
 	for _, c := range cases {
 		d, ok := permissionDetail(c.tool, json.RawMessage(c.in))
@@ -68,7 +72,11 @@ func TestPermissionDetail(t *testing.T) {
 		}
 	}
 	// What could read two ways isn't offered for allowing.
-	for _, in := range []string{`{"command":"ls","command":"rm -rf ~"}`, `["ls"]`, `{"a":1} {"b":2}`} {
+	for _, in := range []string{
+		`{"command":"ls","command":"rm -rf ~"}`, `["ls"]`, `{"a":1} {"b":2}`,
+		`{"opts":{"path":"/tmp","path":"/etc"}}`, `{"list":[{"x":1,"x":2}]}`,
+		`{"path":"/a\ud800/b"}`, `{"path":"\udc00"}`, `{"path":"\ud800\u0041"}`, `{"path":"\ud800"}`,
+	} {
 		if _, ok := permissionDetail("Bash", json.RawMessage(in)); ok {
 			t.Errorf("%s: marked complete", in)
 		}
