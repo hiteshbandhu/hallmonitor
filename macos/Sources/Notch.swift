@@ -50,10 +50,11 @@ final class NotchController {
             model.geometry = nil
             return
         }
-        let geo = NotchGeometry(
+        var geo = NotchGeometry(
             notchWidth: screen.frame.width - left.width - right.width,
             notchHeight: screen.safeAreaInsets.top
         )
+        geo.askMax = max(400, (screen.frame.height - geo.notchHeight) * 0.75)
         model.geometry = geo
 
         let frame = NSRect(x: screen.frame.midX - geo.canvas.width / 2, y: screen.frame.maxY - geo.canvas.height,
@@ -137,7 +138,9 @@ struct NotchGeometry {
     let shoulder: CGFloat = 8
 
     static let rowHeight: CGFloat = 56
-    var canvas: CGSize { CGSize(width: max(notchWidth + 2 * ear, 480) + 2 * shoulder + 40, height: notchHeight + 560) }
+    /// Room for a question card below the notch: most of the screen.
+    var askMax: CGFloat = 640
+    var canvas: CGSize { CGSize(width: max(notchWidth + 2 * ear, 480) + 2 * shoulder + 40, height: notchHeight + max(560, askMax) + 40) }
 
     func size(for mode: NotchMode) -> CGSize {
         switch mode {
@@ -145,7 +148,7 @@ struct NotchGeometry {
         case .compact: return CGSize(width: notchWidth + 2 * ear, height: notchHeight)
         case .banner: return CGSize(width: max(notchWidth + 2 * ear, 420), height: notchHeight + 64)
         case .expanded(let rows): return CGSize(width: max(notchWidth + 2 * ear, 480), height: notchHeight + 14 + CGFloat(max(rows, 1)) * NotchGeometry.rowHeight)
-        case .ask(let h): return CGSize(width: max(notchWidth + 2 * ear, 470), height: notchHeight + min(h, 500))
+        case .ask(let h): return CGSize(width: max(notchWidth + 2 * ear, 470), height: notchHeight + min(h, askMax))
         }
     }
 
@@ -174,10 +177,21 @@ final class NotchModel: ObservableObject {
     @Published private(set) var asking: (session: Session, ask: PendingAsk)?
     @Published private(set) var askIndex = 0
     @Published var wantsKeyboard = false
+    @Published private var askMeasured: (id: String, index: Int, height: CGFloat)?
     private var answeredIDs: Set<String> = []
 
+    /// The card measured itself: size the island to it.
+    func measured(_ id: String, index: Int, height: CGFloat) {
+        guard height > 0, asking?.ask.id == id else { return }
+        if let m = askMeasured, m.id == id, m.index == index, abs(m.height - height) < 1 { return }
+        askMeasured = (id, index, height.rounded(.up))
+    }
+
     var mode: NotchMode {
-        if let a = asking { return .ask(height: askHeight(a.ask, index: askIndex)) }
+        if let a = asking {
+            if let m = askMeasured, m.id == a.ask.id, m.index == askIndex { return .ask(height: m.height) }
+            return .ask(height: askHeight(a.ask, index: askIndex))
+        }
         if hovering { return .expanded(rows: rowCount) }
         if banner != nil { return .banner }
         if !working.isEmpty || !needsYou.isEmpty { return .compact }

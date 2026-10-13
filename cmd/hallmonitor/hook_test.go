@@ -49,3 +49,13 @@ func TestPermissionDetail(t *testing.T) {
 		t.Errorf("edit: %q", d)
 	}
 }
+
+func TestPermissionDetailReadable(t *testing.T) {
+	d := permissionDetail("mcp__linear__create_issue", json.RawMessage(`{"title":"Fix login","team":"ENG","labels":["bug"]}`))
+	if d != "labels: [\"bug\"]\nteam: ENG\ntitle: Fix login" {
+		t.Errorf("mcp: %q", d)
+	}
+	if d := permissionDetail("Bash", json.RawMessage(`{"command":"cd app\nmake test"}`)); d != "cd app\nmake test" {
+		t.Errorf("multi-line command: %q", d)
+	}
+}

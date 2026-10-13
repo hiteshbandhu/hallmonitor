@@ -26,6 +26,11 @@ type usageProgressMsg float64
 // start (the first ever can take a few seconds), then every minute.
 func usageLoop(ctx context.Context, p *tea.Program) {
 	l := usage.Open(usage.DefaultDir())
+	// Show what the ledger already holds while this pass reads what's new:
+	// a pass after a long break, or the first, can take a while.
+	if s := l.Summarize(30); s.Total.Replies > 0 {
+		p.Send(summarize(l, nil))
+	}
 	for {
 		last := time.Time{}
 		err := l.Update(ctx, func(done, total int64) {
@@ -199,7 +204,7 @@ func (m *uiModel) dailyChart(s usage.Summary, w, h int) []string {
 	if peak == 0 {
 		peak = 1
 	}
-	colW := max(1, (w-5)/max(1, len(days)))
+	colW := max(1, (w-6)/max(1, len(days)))
 	barW := max(1, min(colW-1, colW*3/5))
 	if colW == 1 {
 		barW = 1
@@ -208,9 +213,9 @@ func (m *uiModel) dailyChart(s usage.Summary, w, h int) []string {
 	eighths := h * 8
 	for r := 0; r < h; r++ {
 		base := (h - 1 - r) * 8
-		axis := "    "
+		axis := "     "
 		if r == 0 {
-			axis = fitR(hours(peak), 4)
+			axis = fitR(hours(peak), 5)
 		}
 		var sb strings.Builder
 		sb.WriteString(fg(cFaint).Render(axis) + " ")
@@ -261,7 +266,7 @@ func (m *uiModel) dailyChart(s usage.Summary, w, h int) []string {
 	}
 	// Day labels: weekday names for a week, day-of-month every few for longer.
 	var lb strings.Builder
-	lb.WriteString("     ")
+	lb.WriteString("      ")
 	every := max(1, (6+colW-1)/colW)
 	for i, d := range days {
 		t, _ := time.Parse("2006-01-02", d.Date)

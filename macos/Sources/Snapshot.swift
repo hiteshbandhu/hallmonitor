@@ -63,10 +63,20 @@ enum SnapshotMode {
                         multiSelect: false)], tool: nil, detail: nil, deadline: soon)
         let p = PendingAsk(id: "snap-p", session_id: s.id, kind: "permission", questions: nil, tool: "Bash",
                            detail: "pnpm prisma migrate deploy && pnpm test --filter billing", deadline: soon)
-        for (name, a) in [("notch_ask_question", q), ("notch_ask_permission", p)] {
+        let long = PendingAsk(id: "snap-l", session_id: s.id, kind: "question", questions: [
+            AskQuestion(question: "Before I start on the billing migration: the old invoices table has 2.3M rows and no index on customer_id, and the new schema splits line items into their own table. Should I backfill everything in one migration during the maintenance window, or copy in batches behind a feature flag so the app keeps working while it runs?", header: "Migration plan",
+                        options: [AskOption(label: "One migration in the maintenance window", description: "Simplest, but the table is locked for roughly 20 minutes and checkout is down for that time"),
+                                  AskOption(label: "Batches behind a feature flag", description: "Copies 10k rows at a time with dual writes until it catches up, then flips the flag; no downtime but more code to remove later"),
+                                  AskOption(label: "Ask the payments team first", description: nil)],
+                        multiSelect: false)], tool: nil, detail: nil, deadline: soon)
+        let mcp = PendingAsk(id: "snap-m", session_id: s.id, kind: "permission", questions: nil, tool: "Bash",
+                             detail: "cd services/billing\npnpm prisma migrate deploy\npnpm test --filter billing -- --runInBand\ngit add -A && git commit -m \"billing: split line items\"", deadline: soon)
+        for (name, a) in [("notch_ask_question", q), ("notch_ask_permission", p), ("notch_ask_long", long), ("notch_ask_script", mcp)] {
             let m = NotchModel()
             m.geometry = geo
             m.preview(s, a)
+            // Let the card measure itself first, as it does live.
+            renderView(NotchView(model: m).transaction { $0.animation = nil }, size: geo.canvas, dir, name)
             renderView(NotchView(model: m).transaction { $0.animation = nil }, size: geo.canvas, dir, name)
         }
     }

@@ -60,7 +60,7 @@ enum Asks {
     }
 }
 
-/// Height the ask card needs, so the island can size to it.
+/// A first guess at the card's height, until it has measured itself.
 func askHeight(_ a: PendingAsk, index: Int) -> CGFloat {
     let header: CGFloat = 46, footer: CGFloat = 30, pad: CGFloat = 18
     if a.kind == "permission" {
@@ -88,14 +88,25 @@ struct AskCard: View {
     @FocusState private var otherFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-            if ask.kind == "permission" { permission } else { question }
-            footer
+        // The island sizes to what the card measures, up to most of the
+        // screen; past that the card scrolls.
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 10) {
+                header
+                if ask.kind == "permission" { permission } else { question }
+                footer
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 6)
+            .padding(.bottom, 12)
+            .fixedSize(horizontal: false, vertical: true)
+            .background(GeometryReader { g in
+                Color.clear.preference(key: AskHeightKey.self, value: g.size.height)
+            })
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 6)
-        .padding(.bottom, 12)
+        .onPreferenceChange(AskHeightKey.self) { h in
+            MainActor.assumeIsolated { model.measured(ask.id, index: index, height: h) }
+        }
     }
 
     // MARK: pieces
@@ -142,8 +153,8 @@ struct AskCard: View {
                 Text(q.question)
                     .font(.system(size: 13.5, weight: .semibold))
                     .foregroundStyle(.white)
-                    .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
                     .padding(.bottom, 6)
                 ForEach(q.options, id: \.self) { o in
                     OptionRow(option: o, multi: multi, on: picked[q.question, default: []].contains(o.label)) {
@@ -195,7 +206,8 @@ struct AskCard: View {
             Text(ask.detail ?? "")
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.9))
-                .lineLimit(3)
+                .lineLimit(14)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
                 .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(.white.opacity(0.07)))
@@ -285,12 +297,14 @@ private struct OptionRow: View {
                     Text(option.label)
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(.white)
-                        .lineLimit(1)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                     if let d = option.description, !d.isEmpty {
                         Text(d)
                             .font(.system(size: 11))
                             .foregroundStyle(.white.opacity(0.55))
-                            .lineLimit(1)
+                            .lineLimit(5)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer(minLength: 0)
@@ -301,6 +315,7 @@ private struct OptionRow: View {
                 }
             }
             .padding(.horizontal, 12)
+            .padding(.vertical, 8)
             .frame(maxWidth: .infinity, minHeight: (option.description ?? "").isEmpty ? 36 : 46, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(.white.opacity(on ? 0.16 : hover ? 0.12 : 0.07)))
@@ -325,4 +340,9 @@ struct NotchButton: ButtonStyle {
             .background(Capsule().fill(kind == .primary ? Color(red: 0.33, green: 0.86, blue: 0.5) : .white.opacity(0.12)))
             .opacity(enabled ? (configuration.isPressed ? 0.75 : 1) : 0.4)
     }
+}
+
+private struct AskHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

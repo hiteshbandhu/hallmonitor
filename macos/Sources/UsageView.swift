@@ -38,6 +38,7 @@ final class UsageStore: ObservableObject {
     @Published var days = 7 { didSet { if days != oldValue { load() } } }
     @Published private(set) var summary: [Int: FullSummary] = [:]
     @Published private(set) var loading = false
+    @Published private(set) var failed = false
     private let board: Board
     private var timer: Timer?
 
@@ -59,20 +60,15 @@ final class UsageStore: ObservableObject {
 
     private func fetch(_ n: Int) {
         loading = summary[n] == nil
-        let p = board.shellCommand("usage --days \(n) --json")
-        let out = Pipe()
-        p.standardOutput = out
-        p.standardError = FileHandle.nullDevice
-        p.terminationHandler = { [weak self] _ in
-            let data = out.fileHandleForReading.readDataToEndOfFile()
+        Board.collect(board.shellCommand("usage --days \(n) --json")) { [weak self] data in
             let s = try? Board.decoder.decode(FullSummary.self, from: data)
             guard let self else { return }
             Task { @MainActor in
                 if let s { withAnimation(.smooth) { self.summary[n] = s } }
+                self.failed = s == nil && self.summary[n] == nil
                 self.loading = false
             }
         }
-        try? p.run()
     }
 }
 
@@ -102,6 +98,14 @@ struct UsageView: View {
                         TopList(title: "Tools", items: s.tools ?? [], value: { Double($0.tools ?? 0) },
                                 format: { "\(Int($0))" })
                     }
+                } else if store.failed {
+                    VStack(spacing: 10) {
+                        Text("Couldn’t read usage").font(.headline)
+                        Text("Run `hallmonitor usage --days \(store.days)` in a terminal to see what went wrong.")
+                            .foregroundStyle(.secondary)
+                        Button("Try again") { store.load() }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 400)
                 } else {
                     ProgressView("Reading your agents’ logs…")
                         .frame(maxWidth: .infinity, minHeight: 400)

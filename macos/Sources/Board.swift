@@ -367,21 +367,33 @@ final class Board: ObservableObject {
         return out
     }
 
-    func refreshUsage() {
-        let p = shellCommand("usage --days 1 --json")
+    /// Runs p and hands back all it printed. It reads while p runs: output
+    /// bigger than the pipe's buffer (30 days of usage is) would otherwise
+    /// leave p blocked on its write forever.
+    nonisolated static func collect(_ p: Process, _ done: @escaping @Sendable (Data) -> Void) {
         let out = Pipe()
         p.standardOutput = out
         p.standardError = FileHandle.nullDevice
-        p.terminationHandler = { [weak self] _ in
+        do { try p.run() } catch { done(Data()); return }
+        nonisolated(unsafe) let proc = p
+        DispatchQueue.global(qos: .utility).async {
             let data = out.fileHandleForReading.readDataToEndOfFile()
+            proc.waitUntilExit()
+            done(data)
+        }
+    }
+
+    func refreshUsage() {
+        Board.collect(shellCommand("usage --days 1 --json")) { [weak self] data in
             let summary = try? Board.decoder.decode(UsageSummary.self, from: data)
             guard let self else { return }
             Task { @MainActor in
-                self.today = summary?.total
-                self.limits = (summary?.rate_limits ?? [:]).sorted { $0.key < $1.key }
+                // A failed read keeps what was there.
+                guard let summary else { return }
+                self.today = summary.total
+                self.limits = (summary.rate_limits ?? [:]).sorted { $0.key < $1.key }
             }
         }
-        try? p.run()
     }
 
     nonisolated(unsafe) static let decoder: JSONDecoder = {

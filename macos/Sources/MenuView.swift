@@ -45,9 +45,9 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         guard let button = item.button else { return }
         let waiting = board.needsYou.count
         let busy = board.working.count
-        button.image = StatusMenu.glyph(badge: waiting > 0)
-        // Like native extras: dimmed when there's nothing going on.
-        button.appearsDisabled = waiting + busy == 0
+        button.image = StatusMenu.glyph
+        // Always solid: a dimmed icon reads as broken, not as "all quiet".
+        button.appearsDisabled = false
         let count = waiting > 0 ? waiting : busy
         var parts: [String] = []
         if UserDefaults.standard.bool(forKey: "showCount") && count > 0 { parts.append("\(count)") }
@@ -61,30 +61,26 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         button.setAccessibilityLabel("Hall Monitor: \(summary)")
     }
 
-    /// Three bold rounded bars, drawn as a template image so the menu bar
-    /// tints it like every other extra; a dot marks "needs you".
-    static func glyph(badge: Bool) -> NSImage {
+    /// A solid rounded tile with three bars cut out of it, drawn as a
+    /// template image so the menu bar tints it like every other extra.
+    static let glyph: NSImage = {
         let img = NSImage(size: NSSize(width: 18, height: 16), flipped: false) { _ in
             NSColor.black.setFill()
-            let barW: CGFloat = 3.4, gap: CGFloat = 1.9, base: CGFloat = 2
-            let heights: [CGFloat] = [7, 12, 9]
+            let tile = NSRect(x: 1, y: 1, width: 16, height: 14)
+            NSBezierPath(roundedRect: tile, xRadius: 4, yRadius: 4).fill()
+            NSGraphicsContext.current?.compositingOperation = .clear
+            let barW: CGFloat = 2.6, gap: CGFloat = 1.6
+            let heights: [CGFloat] = [4.5, 8.5, 6.2]
             for (i, h) in heights.enumerated() {
-                let x = 1.5 + CGFloat(i) * (barW + gap)
-                NSBezierPath(roundedRect: NSRect(x: x, y: base, width: barW, height: h), xRadius: barW / 2, yRadius: barW / 2).fill()
+                let x = tile.minX + 3.5 + CGFloat(i) * (barW + gap)
+                NSBezierPath(roundedRect: NSRect(x: x, y: tile.minY + 3, width: barW, height: h), xRadius: barW / 2, yRadius: barW / 2).fill()
             }
-            if badge {
-                let dot = NSRect(x: 12.2, y: 9.2, width: 5.6, height: 5.6)
-                // Knock out a ring so the dot reads as separate from the bars.
-                NSGraphicsContext.current?.compositingOperation = .clear
-                NSBezierPath(ovalIn: dot.insetBy(dx: -1.4, dy: -1.4)).fill()
-                NSGraphicsContext.current?.compositingOperation = .sourceOver
-                NSBezierPath(ovalIn: dot).fill()
-            }
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
             return true
         }
         img.isTemplate = true
         return img
-    }
+    }()
 
     private var tightestLimit: RateLimit? {
         let all = board.limits.map(\.value)

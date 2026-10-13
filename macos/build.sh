@@ -24,6 +24,10 @@ swiftc -O -parse-as-library -target arm64-apple-macos14.0 \
 codesign --force --deep -s - "$out" >/dev/null
 echo "built $out"
 
+# A dev build shares the real app's bundle id: keep Launch Services (and so
+# the login item) on the installed app, not this copy.
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$PWD/$out" 2>/dev/null || true
+
 if [[ ${1:-} == --install ]]; then
   pkill -x HallMonitor 2>/dev/null || true
   mkdir -p ~/Applications

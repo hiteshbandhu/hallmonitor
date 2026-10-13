@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -47,12 +48,19 @@ func runHook(args []string) {
 }
 
 type hookInput struct {
-	Event     string          `json:"hook_event_name"`
-	SessionID string          `json:"session_id"`
-	CWD       string          `json:"cwd"`
-	Tool      string          `json:"tool_name"`
-	ToolInput json.RawMessage `json:"tool_input"`
+	Event      string          `json:"hook_event_name"`
+	SessionID  string          `json:"session_id"`
+	Transcript string          `json:"transcript_path"`
+	CWD        string          `json:"cwd"`
+	Tool       string          `json:"tool_name"`
+	ToolUseID  string          `json:"tool_use_id"`
+	ToolInput  json.RawMessage `json:"tool_input"`
 }
+
+// interactive are tools whose permission prompt is the tool itself: a
+// question is asked through PreToolUse instead, and Claude Code ignores an
+// allow from a hook for them.
+var interactive = map[string]bool{"AskUserQuestion": true, "ExitPlanMode": true}
 
 // hook never fails loudly: on anything unexpected it says nothing, and
 // Claude Code carries on as if it weren't there.
@@ -62,7 +70,7 @@ func hook() {
 	if json.Unmarshal(in, &h) != nil || !ask.AppListening(time.Now()) {
 		return
 	}
-	a := ask.Ask{ID: newID(), SessionID: h.SessionID, CWD: h.CWD, At: time.Now()}
+	a := ask.Ask{ID: newID(), SessionID: h.SessionID, CWD: h.CWD, PID: os.Getpid(), At: time.Now()}
 	a.Deadline = a.At.Add(askWait)
 	var questions json.RawMessage
 	switch {
@@ -75,25 +83,29 @@ func hook() {
 		}
 		questions = ti.Questions
 		a.Kind = ask.KindQuestion
-	case h.Event == "PermissionRequest":
+	case h.Event == "PermissionRequest" && !interactive[h.Tool]:
 		a.Kind = ask.KindPermission
 		a.Tool = h.Tool
 		a.Detail = permissionDetail(h.Tool, h.ToolInput)
 	default:
 		return
 	}
+	// Watch from before the notch shows it: Claude Code shows its own
+	// prompt alongside, and you may answer there first.
+	watch := ask.NewWatch(h.Transcript, h.ToolUseID, h.Tool, h.ToolInput)
+	ppid := os.Getppid()
 	if ask.Post(a) != nil {
 		return
 	}
 	defer ask.Done(a.ID)
 
-	// Claude Code kills the hook if you answer in the terminal instead.
+	// Claude Code may kill the hook if you answer in the terminal instead.
 	stop := make(chan struct{})
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	go func() { <-sig; close(stop) }()
 
-	ans, ok := ask.Wait(a.ID, a.Deadline, stop)
+	ans, ok := ask.Wait(a.ID, a.Deadline, stop, func() bool { return os.Getppid() != ppid || watch.Done() })
 	if !ok {
 		return
 	}
@@ -134,19 +146,54 @@ func hookOutput(event string, a ask.Ask, questions json.RawMessage, ans ask.Answ
 	return nil // "pass": the usual prompt
 }
 
-// permissionDetail is the one line that says what the tool wants to do.
+// permissionDetail says what the tool wants to do: its command, file or
+// URL, or else its inputs as "key: value" lines, never raw JSON.
 func permissionDetail(tool string, input json.RawMessage) string {
 	var m map[string]any
 	_ = json.Unmarshal(input, &m)
-	for _, k := range []string{"command", "file_path", "url", "pattern", "path", "query", "prompt", "description"} {
-		if v, ok := m[k].(string); ok && v != "" {
-			if k == "file_path" || k == "path" {
+	for _, k := range []string{"command", "file_path", "notebook_path", "url", "pattern", "path", "query", "prompt", "description"} {
+		if v, ok := m[k].(string); ok && strings.TrimSpace(v) != "" {
+			if k == "file_path" || k == "notebook_path" || k == "path" {
 				return filepath.Base(v)
 			}
-			return model.Snip(strings.TrimSpace(v), 200)
+			if k == "command" {
+				return clip(strings.TrimSpace(v), 600) // a script reads better on its own lines
+			}
+			return model.Snip(strings.TrimSpace(v), 600)
 		}
 	}
-	return model.Snip(string(input), 200)
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var lines []string
+	for _, k := range keys {
+		var v string
+		switch x := m[k].(type) {
+		case string:
+			v = strings.Join(strings.Fields(x), " ")
+		case nil:
+			continue
+		default:
+			b, _ := json.Marshal(x)
+			v = string(b)
+		}
+		lines = append(lines, k+": "+model.Snip(v, 120))
+		if len(lines) == 6 {
+			break
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// clip trims s to n runes, keeping its lines.
+func clip(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return strings.TrimRight(string(r[:n-1]), " \n") + "…"
 }
 
 func newID() string {

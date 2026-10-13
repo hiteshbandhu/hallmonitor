@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -48,6 +49,7 @@ type Ask struct {
 	Questions []Question `json:"questions,omitempty"` // KindQuestion
 	Tool      string     `json:"tool,omitempty"`      // KindPermission: the tool, e.g. "Bash"
 	Detail    string     `json:"detail,omitempty"`    // KindPermission: what it wants to do
+	PID       int        `json:"pid,omitempty"`       // the waiting hook; when it's gone, so is the question
 	At        time.Time  `json:"at"`
 	Deadline  time.Time  `json:"deadline"`
 }
@@ -99,8 +101,9 @@ func Post(a Ask) error {
 	return os.Rename(tmp, askPath(a.ID))
 }
 
-// Wait blocks until the question is answered or the deadline passes.
-func Wait(id string, deadline time.Time, stop <-chan struct{}) (Answer, bool) {
+// Wait blocks until the question is answered, the deadline passes, stop
+// closes or gone (when set) reports it was answered elsewhere.
+func Wait(id string, deadline time.Time, stop <-chan struct{}, gone func() bool) (Answer, bool) {
 	t := time.NewTicker(150 * time.Millisecond)
 	defer t.Stop()
 	for {
@@ -110,7 +113,7 @@ func Wait(id string, deadline time.Time, stop <-chan struct{}) (Answer, bool) {
 				return ans, true
 			}
 		}
-		if time.Now().After(deadline) {
+		if time.Now().After(deadline) || (gone != nil && gone()) {
 			return Answer{}, false
 		}
 		select {
@@ -144,7 +147,7 @@ func Pending(now time.Time) []Ask {
 		if json.Unmarshal(b, &a) != nil {
 			continue
 		}
-		if now.After(a.Deadline.Add(5 * time.Second)) {
+		if now.After(a.Deadline.Add(5*time.Second)) || (a.PID > 0 && !alive(a.PID)) {
 			_ = os.Remove(f)
 			continue
 		}
@@ -155,4 +158,10 @@ func Pending(now time.Time) []Ask {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
 	return out
+}
+
+// alive reports whether process pid still runs.
+func alive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || err == syscall.EPERM
 }
