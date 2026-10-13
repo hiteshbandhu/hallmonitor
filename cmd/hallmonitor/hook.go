@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -10,10 +11,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/hiteshbandhu/hallmonitor/internal/ask"
 	"github.com/hiteshbandhu/hallmonitor/internal/migrate"
@@ -152,15 +156,15 @@ func hookOutput(event string, a ask.Ask, questions json.RawMessage, ans ask.Answ
 const maxDetail = 2000
 
 // permissionDetail is everything the tool wants to do: a shell command as
-// written, otherwise every input as a "key: value" line. complete is false
-// when it didn't fit; then only Deny or Claude's own prompt are offered.
+// written, then every other input as a `key: value` line with the value in
+// JSON, so no value can pass for another line. complete is false when it
+// doesn't fit or can't be shown faithfully (not an object, a key given
+// twice); then only Deny or Claude's own prompt are offered.
 func permissionDetail(tool string, input json.RawMessage) (detail string, complete bool) {
-	var m map[string]any
-	if json.Unmarshal(input, &m) != nil {
-		return fit(string(input))
-	}
-	if cmd, ok := m["command"].(string); ok && (tool == "Bash" || len(m) == 1 || (len(m) == 2 && m["description"] != nil)) {
-		return fit(strings.TrimSpace(cmd))
+	m, ok := decodeInput(input)
+	if !ok {
+		d, _ := fit(visible(string(input)))
+		return d, false
 	}
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -168,15 +172,78 @@ func permissionDetail(tool string, input json.RawMessage) (detail string, comple
 	}
 	sort.Strings(keys)
 	var lines []string
+	if cmd, isStr := m["command"].(string); isStr && tool == "Bash" {
+		lines = append(lines, visible(cmd))
+		delete(m, "command")
+		delete(m, "description") // Claude's own words about the command, not what it runs
+	}
 	for _, k := range keys {
-		v, ok := m[k].(string)
-		if !ok {
-			b, _ := json.Marshal(m[k])
-			v = string(b)
+		v, present := m[k]
+		if !present {
+			continue
 		}
-		lines = append(lines, k+": "+v)
+		b, _ := json.Marshal(v)
+		name := k
+		if !plainKey.MatchString(k) {
+			kb, _ := json.Marshal(k)
+			name = string(kb)
+		}
+		lines = append(lines, name+": "+visible(string(b)))
 	}
 	return fit(strings.Join(lines, "\n"))
+}
+
+var plainKey = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+// decodeInput reads a tool input the way Claude Code does, refusing what
+// could read two ways: a key given twice, or anything but an object.
+// Numbers keep their exact digits.
+func decodeInput(input json.RawMessage) (map[string]any, bool) {
+	d := json.NewDecoder(bytes.NewReader(input))
+	d.UseNumber()
+	if t, err := d.Token(); err != nil || t != json.Delim('{') {
+		return nil, false
+	}
+	m := map[string]any{}
+	for d.More() {
+		t, err := d.Token()
+		k, isKey := t.(string)
+		if err != nil || !isKey {
+			return nil, false
+		}
+		if _, dup := m[k]; dup {
+			return nil, false
+		}
+		var v any
+		if d.Decode(&v) != nil {
+			return nil, false
+		}
+		m[k] = v
+	}
+	if t, err := d.Token(); err != nil || t != json.Delim('}') {
+		return nil, false
+	}
+	if _, err := d.Token(); err != io.EOF {
+		return nil, false
+	}
+	return m, true
+}
+
+// visible spells out characters that would hide or reorder text on screen:
+// controls (but newlines and tabs), zero-width and bidirectional marks.
+func visible(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\t':
+			b.WriteRune(r)
+		case r == utf8.RuneError, unicode.IsControl(r), unicode.Is(unicode.Cf, r), unicode.Is(unicode.Zl, r), unicode.Is(unicode.Zp, r):
+			fmt.Fprintf(&b, "\\u{%04X}", r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func fit(s string) (string, bool) {
