@@ -184,18 +184,28 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         return parts.joined(separator: " · ")
     }
 
-    /// Everything we know about one agent, plus a couple of useful actions.
+    /// A short card for one agent: what it's on, what it runs, and a
+    /// couple of useful actions. One line each, cut to a menu's width.
     private func details(_ s: Session) -> NSMenu {
         let m = NSMenu()
         m.autoenablesItems = false
+        let local = (s.host ?? "").isEmpty
         func info(_ label: String, _ value: String?) {
             guard let value, !value.isEmpty else { return }
-            let i = NSMenuItem(title: value, action: nil, keyEquivalent: "")
-            i.isEnabled = false
-            i.setSubtitle(label)
+            // Enabled, so it reads at full contrast; a click opens the agent.
+            let i = NSMenuItem(title: value, action: local ? #selector(focusAgent(_:)) : nil, keyEquivalent: "")
+            i.target = self
+            i.representedObject = s
+            let t = NSMutableAttributedString(string: label + "  ", attributes: [
+                .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ])
+            t.append(NSAttributedString(string: StatusMenu.cut(value, 46), attributes: [.font: NSFont.menuFont(ofSize: 0)]))
+            i.attributedTitle = t
+            i.toolTip = value
             m.addItem(i)
         }
-        if (s.host ?? "").isEmpty {
+        if local {
             let open = NSMenuItem(title: "Open", action: #selector(focusAgent(_:)), keyEquivalent: "")
             open.target = self
             open.representedObject = s
@@ -203,36 +213,39 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             m.addItem(open)
             m.addItem(.separator())
         }
-        m.addItem(.sectionHeader(title: "\(Provider.name(s.provider)) · \(statusWord(s.status))"))
-        info("Doing", s.last?.replacingOccurrences(of: "↳ ", with: ""))
-        info("Asked", s.prompt.map { "“\($0)”" })
-        info("Folder", (s.cwd as NSString).abbreviatingWithTildeInPath)
-        var model = s.model.map(Model.display) ?? ""
-        if let c = s.context_tokens, c > 0 { model += model.isEmpty ? "\(c / 1000)k context" : " · \(c / 1000)k context" }
-        info("Model", model)
+        var head = "\(Provider.name(s.provider)) · \(statusWord(s.status))"
+        if let started = s.started_at { head += " · started \(started.formatted(.relative(presentation: .named)))" }
+        m.addItem(.sectionHeader(title: head))
+        if s.working || s.needsYou {
+            info("Now", s.last?.replacingOccurrences(of: "↳ ", with: ""))
+        }
+        info("Asked", s.prompt)
+        var run = s.model.map(Model.display) ?? ""
+        if let c = s.context_tokens, c > 0 { run += (run.isEmpty ? "" : " · ") + "\(c / 1000)k" }
         if let sa = s.subagents, sa.total > 0 {
-            info("Subagents", s.runningSubagents > 0 ? sa.label : "\(sa.total) started, none running")
-            if s.runningSubagents > 0 {
-                for a in sa.active ?? [] { info("Running", a) }
-            }
+            run += (run.isEmpty ? "" : " · ") + (s.runningSubagents > 0 ? "\(s.runningSubagents) of \(sa.total) subagents running" : "\(sa.total) subagents")
         }
-        info("Machine", s.host)
-        if let started = s.started_at {
-            info("Started", started.formatted(.relative(presentation: .named)))
-        }
+        if let h = s.host, !h.isEmpty { run += " · " + h }
+        info("Runs", run)
         m.addItem(.separator())
         let copy = NSMenuItem(title: "Copy Session ID", action: #selector(copyID(_:)), keyEquivalent: "")
         copy.target = self
         copy.representedObject = s.id
         copy.isEnabled = !s.id.isEmpty
         m.addItem(copy)
-        if s.host?.isEmpty ?? true {
-            let reveal = NSMenuItem(title: "Show Folder in Finder", action: #selector(reveal(_:)), keyEquivalent: "")
+        if local {
+            let reveal = NSMenuItem(title: "Show \((s.cwd as NSString).lastPathComponent) in Finder", action: #selector(reveal(_:)), keyEquivalent: "")
             reveal.target = self
             reveal.representedObject = s.cwd
             m.addItem(reveal)
         }
         return m
+    }
+
+    /// s on one line, at most n characters.
+    static func cut(_ s: String, _ n: Int) -> String {
+        let one = s.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        return one.count <= n ? one : String(one.prefix(n - 1)).trimmingCharacters(in: .whitespaces) + "…"
     }
 
     private func usage() {
