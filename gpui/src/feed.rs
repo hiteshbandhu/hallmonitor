@@ -97,21 +97,56 @@ pub struct RateLimit {
     pub used_percent: f64,
     #[serde(default)]
     pub window_minutes: i64,
+    pub resets_at: Option<DateTime<Utc>>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct Day {
+    pub date: String,
+    #[serde(default)]
+    pub by_provider: BTreeMap<String, Counters>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct Named {
+    pub name: String,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub counters: Counters,
+}
+
+/// `hallmonitor usage --days N --json`.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Usage {
     #[serde(default)]
     pub total: Counters,
+    #[serde(default)]
+    pub sessions: i64,
+    #[serde(default)]
+    pub days: Vec<Day>,
+    /// heat[weekday][hour] = active seconds; weekday 0 is Monday.
+    #[serde(default)]
+    pub heat: Vec<Vec<f64>>,
+    #[serde(default)]
+    pub projects: Vec<Named>,
+    #[serde(default)]
+    pub models: Vec<Named>,
+    #[serde(default)]
+    pub tools: Vec<Named>,
     #[serde(default)]
     pub rate_limits: BTreeMap<String, RateLimit>,
 }
 
 pub enum Msg {
     Sessions(Vec<Session>),
-    Usage(Usage),
+    /// A range in days, and its summary.
+    Usage(u32, Usage),
     Problem(String),
 }
+
+/// The ranges the usage view offers.
+pub const RANGES: [u32; 3] = [1, 7, 30];
 
 impl Session {
     pub fn key(&self) -> String {
@@ -182,11 +217,19 @@ pub fn start(tx: UnboundedSender<Msg>) {
     });
 
     thread::spawn(move || loop {
+        // The first read brings the ledger up to date; the rest only read it.
         // output() reads while the command runs, so big output can't block it.
-        if let Ok(out) = Command::new(binary()).args(["usage", "--days", "1", "--json"]).stderr(Stdio::null()).output() {
-            if let Ok(u) = serde_json::from_slice::<Usage>(&out.stdout) {
-                if tx.unbounded_send(Msg::Usage(u)).is_err() {
-                    return;
+        for (i, days) in RANGES.into_iter().enumerate() {
+            let n = days.to_string();
+            let mut args = vec!["usage", "--days", n.as_str(), "--json"];
+            if i > 0 {
+                args.push("--no-update");
+            }
+            if let Ok(out) = Command::new(binary()).args(args).stderr(Stdio::null()).output() {
+                if let Ok(u) = serde_json::from_slice::<Usage>(&out.stdout) {
+                    if tx.unbounded_send(Msg::Usage(days, u)).is_err() {
+                        return;
+                    }
                 }
             }
         }
