@@ -3,6 +3,7 @@
 package migrate
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -72,7 +73,9 @@ func statusLine(path, self string) {
 	if st != nil {
 		mode = st.Mode().Perm()
 	}
-	_ = os.WriteFile(path, []byte(strings.Replace(s, old, bin+" statusline", 1)), mode)
+	// The command sits in a JSON string and runs through sh: quote it for both.
+	q, _ := json.Marshal("'" + strings.ReplaceAll(bin, "'", `'\''`) + "' statusline")
+	_ = os.WriteFile(path, []byte(strings.Replace(s, old, string(q[1:len(q)-1]), 1)), mode)
 }
 
 var installed = []string{"/opt/homebrew/bin/hallmonitor", "/usr/local/bin/hallmonitor",

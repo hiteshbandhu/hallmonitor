@@ -477,7 +477,10 @@ enum Model {
 enum Launcher {
     /// Opens the terminal board in iTerm2 if it's installed, else Terminal.
     static func openBoard(view: String = "agents") {
-        let cmd = "\(Board.binary) --view \(view)"
+        // A shell command inside an AppleScript string: quote for both.
+        let cmd = "\(Board.quote(Board.binary)) --view \(Board.quote(view))"
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
         let script: String
         if FileManager.default.fileExists(atPath: "/Applications/iTerm.app") {
             script = """

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/hiteshbandhu/hallmonitor/internal/model"
 )
@@ -42,9 +43,9 @@ func New(target, command string, interval time.Duration, stream bool) *Adapter {
 // HostName is the label shown on the board: the destination without user@.
 func HostName(target string) string {
 	if i := strings.LastIndexByte(target, '@'); i >= 0 {
-		return target[i+1:]
+		target = target[i+1:]
 	}
-	return target
+	return model.Clean(target)
 }
 
 func (a *Adapter) Name() string { return "host:" + HostName(a.Target) }
@@ -55,11 +56,26 @@ func (a *Adapter) sshArgs(remote string) []string {
 		"-o", "ConnectTimeout=8",
 		"-o", "ServerAliveInterval=10",
 		"-o", "ServerAliveCountMax=3",
-		a.Target, remote,
+		"--", a.Target, remote,
 	}
 }
 
+// ValidTarget refuses a destination ssh would read as an option (say
+// "-oProxyCommand=…", which runs a local command) or that holds spaces or
+// control characters.
+func ValidTarget(target string) error {
+	if target == "" || strings.HasPrefix(target, "-") || strings.ContainsFunc(target, func(r rune) bool {
+		return r <= ' ' || r == 0x7f || unicode.IsSpace(r) || unicode.IsControl(r)
+	}) {
+		return fmt.Errorf("not an ssh destination: %q", target)
+	}
+	return nil
+}
+
 func (a *Adapter) Collect(ctx context.Context) ([]model.Session, error) {
+	if err := ValidTarget(a.Target); err != nil {
+		return nil, err
+	}
 	if !a.Stream {
 		return a.oneShot(ctx)
 	}
@@ -156,6 +172,9 @@ func (a *Adapter) tag(snap model.Snapshot) []model.Session {
 	out := make([]model.Session, len(snap.Sessions))
 	for i, s := range snap.Sessions {
 		s.Host = host
+		// A question there is answered there; one shown here could only
+		// be a fake, and its id would name a file here.
+		s.Ask = nil
 		out[i] = s
 	}
 	return out

@@ -60,13 +60,13 @@ func TestWatchQuestion(t *testing.T) {
 func TestPendingDropsDeadHook(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	now := time.Now()
-	live := Ask{ID: "a", SessionID: "s", Kind: KindQuestion, PID: os.Getpid(), At: now, Deadline: now.Add(time.Minute)}
-	dead := Ask{ID: "b", SessionID: "s", Kind: KindQuestion, PID: 1 << 30, At: now, Deadline: now.Add(time.Minute)}
+	live := Ask{ID: NewID(), SessionID: "s", Kind: KindQuestion, PID: os.Getpid(), At: now, Deadline: now.Add(time.Minute)}
+	dead := Ask{ID: NewID(), SessionID: "s", Kind: KindQuestion, PID: 1 << 30, At: now, Deadline: now.Add(time.Minute)}
 	if Post(live) != nil || Post(dead) != nil {
 		t.Fatal("post")
 	}
 	got := Pending(now)
-	if len(got) != 1 || got[0].ID != "a" {
+	if len(got) != 1 || got[0].ID != live.ID {
 		t.Fatalf("pending = %+v", got)
 	}
 }

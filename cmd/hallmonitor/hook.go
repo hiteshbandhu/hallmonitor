@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -73,7 +71,7 @@ func hook() {
 	if json.Unmarshal(in, &h) != nil || !ask.AppListening(time.Now()) {
 		return
 	}
-	a := ask.Ask{ID: newID(), SessionID: h.SessionID, CWD: h.CWD, PID: os.Getpid(), At: time.Now()}
+	a := ask.Ask{ID: ask.NewID(), SessionID: h.SessionID, CWD: h.CWD, PID: os.Getpid(), At: time.Now()}
 	a.Deadline = a.At.Add(askWait)
 	var questions json.RawMessage
 	switch {
@@ -328,24 +326,50 @@ func fit(s string) (string, bool) {
 	return string(r[:maxDetail-1]) + "…", false
 }
 
-func newID() string {
-	b := make([]byte, 8)
-	_, _ = rand.Read(b)
-	return time.Now().Format("20060102150405") + "-" + hex.EncodeToString(b)
-}
-
 // ---- install ----
-
-const hookMark = "hallmonitor hook"
 
 func claudeSettingsPath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".claude", "settings.json")
 }
 
+// isOurHook reports whether a hook command is `<path>/hallmonitor hook`, as
+// editHooks writes it (the path maybe quoted), and not merely one that
+// mentions it.
+func isOurHook(cmd string) bool {
+	prog, ok := strings.CutSuffix(strings.TrimSpace(cmd), " hook")
+	if !ok {
+		return false
+	}
+	b := filepath.Base(strings.Trim(prog, "'"))
+	return b == "hallmonitor" || b == "agentboard"
+}
+
 func hooksInstalled() bool {
 	b, err := os.ReadFile(claudeSettingsPath())
-	return err == nil && strings.Contains(string(b), hookMark)
+	if err != nil {
+		return false
+	}
+	var settings struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if json.Unmarshal(b, &settings) != nil {
+		return false
+	}
+	for _, groups := range settings.Hooks {
+		for _, g := range groups {
+			for _, h := range g.Hooks {
+				if isOurHook(h.Command) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // editHooks adds (or removes) our two hooks, leaving every other hook and
@@ -378,7 +402,7 @@ func editHooks(add bool) error {
 			var keep []any
 			for _, h := range hs {
 				hm, _ := h.(map[string]any)
-				if cmd, _ := hm["command"].(string); strings.Contains(cmd, hookMark) {
+				if cmd, _ := hm["command"].(string); isOurHook(cmd) {
 					continue
 				}
 				keep = append(keep, h)
@@ -421,5 +445,6 @@ func editHooks(add bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	// Settings can carry API keys in "env": yours to read only.
+	return os.WriteFile(path, append(b, '\n'), 0o600)
 }

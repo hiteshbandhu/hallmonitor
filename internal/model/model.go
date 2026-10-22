@@ -3,11 +3,12 @@ package model
 
 import (
 	"context"
-
-	"github.com/hiteshbandhu/hallmonitor/internal/ask"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+
+	"github.com/hiteshbandhu/hallmonitor/internal/ask"
 )
 
 type Status string
@@ -94,6 +95,58 @@ type Adapter interface {
 	Collect(ctx context.Context) ([]Session, error)
 }
 
+// Clean drops what a terminal would act on instead of print (escape
+// sequences, C0 and C1 controls but newlines and tabs) and the marks that
+// reorder text. Session text comes from transcripts and other machines, so
+// an agent that read a hostile page could otherwise retitle the terminal,
+// write the clipboard (OSC 52) or redraw the screen.
+func Clean(s string) string {
+	if !strings.ContainsFunc(s, unsafeRune) {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if unsafeRune(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+func unsafeRune(r rune) bool {
+	switch {
+	case r == '\n' || r == '\t':
+		return false
+	case unicode.IsControl(r), r == unicode.ReplacementChar:
+		return true
+	case r == 0x061C, r == 0x200E, r == 0x200F, r >= 0x202A && r <= 0x202E, r >= 0x2066 && r <= 0x2069:
+		return true // bidi marks and overrides
+	}
+	return false
+}
+
+// Sanitize cleans every field of s that ends up on screen.
+func (s *Session) Sanitize() {
+	for _, f := range []*string{&s.Host, &s.Provider, &s.ID, &s.Title, &s.CWD, &s.Kind, &s.Model, &s.Source, &s.Last, &s.Prompt} {
+		*f = Clean(*f)
+	}
+	s.Status = Status(Clean(string(s.Status)))
+	if len(s.Extra) > 0 {
+		extra := make(map[string]string, len(s.Extra))
+		for k, v := range s.Extra {
+			extra[Clean(k)] = Clean(v)
+		}
+		s.Extra = extra
+	}
+	if s.Subagents != nil {
+		sub := *s.Subagents
+		sub.Active = make([]string, len(s.Subagents.Active))
+		for i, a := range s.Subagents.Active {
+			sub.Active[i] = Clean(a)
+		}
+		s.Subagents = &sub
+	}
+}
+
 // Snip trims s to n runes on one line.
 func Snip(s string, n int) string {
 	out := make([]rune, 0, n)
@@ -104,6 +157,9 @@ func Snip(s string, n int) string {
 				out = append(out, ' ')
 			}
 			space = true
+			continue
+		}
+		if unsafeRune(r) {
 			continue
 		}
 		space = false

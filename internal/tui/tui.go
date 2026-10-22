@@ -1174,7 +1174,7 @@ func (m *uiModel) footer() string {
 			strings.Repeat(" ", margin)
 	}
 	if len(errs) > 0 {
-		right = fg(cRed).Render(fit("! "+strings.Join(errs, " · "), max(10, m.w/2))) + strings.Repeat(" ", margin)
+		right = fg(cRed).Render(fit("! "+model.Clean(strings.Join(errs, " · ")), max(10, m.w/2))) + strings.Repeat(" ", margin)
 	}
 	space := m.w - lipgloss.Width(left) - lipgloss.Width(right)
 	return left + strings.Repeat(" ", max(1, space)) + right

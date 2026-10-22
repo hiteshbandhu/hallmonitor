@@ -123,10 +123,10 @@ var ErrBusy = errors.New("usage ledger is being updated by another hallmonitor")
 
 // Update reads new data from every agent log into the ledger.
 func (l *Ledger) Update(ctx context.Context, progress Progress) error {
-	if err := os.MkdirAll(filepath.Join(l.Dir, "days"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(l.Dir, "days"), 0o700); err != nil {
 		return err
 	}
-	lock, err := os.OpenFile(filepath.Join(l.Dir, ".lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	lock, err := os.OpenFile(filepath.Join(l.Dir, ".lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
@@ -325,7 +325,7 @@ func (l *Ledger) loadState() {
 		// Unknown layout: start over rather than double count.
 		l.st = &state{Version: stateVersion}
 		_ = os.RemoveAll(filepath.Join(l.Dir, "days"))
-		_ = os.MkdirAll(filepath.Join(l.Dir, "days"), 0o755)
+		_ = os.MkdirAll(filepath.Join(l.Dir, "days"), 0o700)
 	}
 	if l.st.Files == nil {
 		l.st.Files = map[string]*fileState{}
@@ -359,7 +359,7 @@ func writeJSON(path string, v any) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)

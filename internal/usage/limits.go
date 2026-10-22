@@ -45,7 +45,7 @@ func (l *Ledger) SaveClaudeLimits(st ClaudeStatus, now time.Time) error {
 	put("claude:5h", st.RateLimits.FiveHour, 5*60)
 	put("claude:7d", st.RateLimits.SevenDay, 7*24*60)
 	put("claude:spend", st.RateLimits.SpendLimit, 0)
-	if err := os.MkdirAll(l.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(l.Dir, 0o700); err != nil {
 		return err
 	}
 	return writeJSON(claudeLimitsPath(l.Dir), limits)

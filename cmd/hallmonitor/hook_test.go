@@ -94,3 +94,27 @@ func TestPermissionDetail(t *testing.T) {
 		t.Error("deny should still go through")
 	}
 }
+
+func TestIsOurHook(t *testing.T) {
+	for cmd, want := range map[string]bool{
+		"/opt/homebrew/bin/hallmonitor hook":                                    true,
+		"'/Users/me/My Apps/HallMonitor.app/Contents/Helpers/hallmonitor' hook": true,
+		"echo 'hallmonitor hook'":                                               false,
+		"my-script --not-hallmonitor hook":                                      false,
+		"/usr/local/bin/hallmonitor hook --other":                               false,
+	} {
+		if got := isOurHook(cmd); got != want {
+			t.Errorf("isOurHook(%q) = %v", cmd, got)
+		}
+	}
+	for s, want := range map[string]string{
+		"/opt/homebrew/bin/hallmonitor": "/opt/homebrew/bin/hallmonitor",
+		"/a b/hallmonitor":              "'/a b/hallmonitor'",
+		"/a=b/x\ny":                     "'/a=b/x\ny'",
+		"it's":                          `'it'\''s'`,
+	} {
+		if got := shellQuote(s); got != want {
+			t.Errorf("shellQuote(%q) = %q", s, got)
+		}
+	}
+}

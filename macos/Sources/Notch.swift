@@ -218,6 +218,8 @@ final class NotchModel: ObservableObject {
                     self.visible = board.sessions.filter { !$0.stale }
                     let next = board.sessions
                         .compactMap { s in s.ask.map { (session: s, ask: $0) } }
+                        // Only this Mac's hook can be answered from here.
+                        .filter { ($0.session.host ?? "").isEmpty && Asks.validID($0.ask.id) }
                         .filter { !self.answeredIDs.contains($0.ask.id) }
                         .min { ($0.ask.deadline ?? .distantFuture) < ($1.ask.deadline ?? .distantFuture) }
                     if next?.ask.id != self.asking?.ask.id {

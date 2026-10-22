@@ -244,7 +244,7 @@ final class Board: ObservableObject {
     func shellCommand(_ args: String, env: String = "") -> Process {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
-        p.arguments = ["-lc", "\(env)exec \(Board.binary) \(args)"]
+        p.arguments = ["-lc", "\(env)exec \(Board.quote(Board.binary)) \(args)"]
         return p
     }
 

@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/hiteshbandhu/hallmonitor/internal/model"
 	"github.com/hiteshbandhu/hallmonitor/internal/usage"
 )
 
@@ -366,7 +367,7 @@ func (m *uiModel) usageLists(s usage.Summary, w, h int) []string {
 				full++
 			}
 			bar.WriteString(fg(cFaint).Render(strings.Repeat("·", max(0, barW-full))))
-			out = append(out, fg(cFg).Render(fit(it.Name, nameW))+bar.String()+" "+fg(cMuted).Render(fitR(label(it.Counters), valW)))
+			out = append(out, fg(cFg).Render(fit(model.Clean(it.Name), nameW))+bar.String()+" "+fg(cMuted).Render(fitR(label(it.Counters), valW)))
 		}
 	}
 	head(fmt.Sprintf("TOP PROJECTS · %dD", m.usageDays))
@@ -435,7 +436,7 @@ func (m *uiModel) usageFooter() string {
 	}, fg(cFaint).Render("   ·   "))
 	right := fg(cFaint).Render("local ledger · counts only, no prompts stored") + strings.Repeat(" ", margin)
 	if m.usageErr != nil {
-		right = fg(cRed).Render(fit("! "+m.usageErr.Error(), m.w/2)) + strings.Repeat(" ", margin)
+		right = fg(cRed).Render(fit("! "+model.Clean(m.usageErr.Error()), m.w/2)) + strings.Repeat(" ", margin)
 	}
 	return left + strings.Repeat(" ", max(1, m.w-lipgloss.Width(left)-lipgloss.Width(right))) + right
 }

@@ -8,12 +8,26 @@
 // to Claude Code. If the app isn't running, or you don't answer in time, or
 // you choose to answer in Claude, the hook says nothing and Claude Code asks
 // you the usual way. Nothing here runs unless you turn it on.
+//
+// Who can answer: the files live in a directory only you can open, and the
+// hook takes an answer only from a plain file you own. That keeps other
+// users out. It can't tell the app from another program running as you:
+// such a program could write an answer, but it could just as well add an
+// allow-everything hook to ~/.claude/settings.json, so it gains nothing
+// here. Sandboxed agents (Claude Code's or Codex's sandbox) can't write
+// outside their project, so they can't answer.
 package ask
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"syscall"
@@ -79,16 +93,94 @@ func AlivePath() string { return filepath.Join(Dir(), ".app-alive") }
 
 // AppListening reports whether the app is up and wants questions.
 func AppListening(now time.Time) bool {
-	fi, err := os.Stat(AlivePath())
+	if secureDir() != nil {
+		return false
+	}
+	fi, err := ownFile(AlivePath())
 	return err == nil && now.Sub(fi.ModTime()) < 12*time.Second
 }
+
+// NewID names a new question.
+func NewID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return time.Now().Format("20060102150405") + "-" + hex.EncodeToString(b)
+}
+
+// validID is the shape NewID makes. An id names files, so
+// anything else (a "../" in a planted question, say) is refused.
+var validID = regexp.MustCompile(`^[0-9]{14}-[0-9a-f]{16}$`)
+
+// ValidID reports whether id can name a question.
+func ValidID(id string) bool { return validID.MatchString(id) }
 
 func askPath(id string) string    { return filepath.Join(Dir(), id+".json") }
 func answerPath(id string) string { return filepath.Join(Dir(), id+".answer.json") }
 
+// secureDir makes the directory, or checks the one there: a real directory
+// (not a link), yours, open to no one else.
+func secureDir() error {
+	if err := os.MkdirAll(Dir(), 0o700); err != nil {
+		return err
+	}
+	return checkDir(true)
+}
+
+// checkDir reports whether the directory is yours alone; with fix, it
+// takes away other people's access first.
+func checkDir(fix bool) error {
+	dir := Dir()
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !fi.IsDir() || !ok || int(st.Uid) != os.Getuid() {
+		return fmt.Errorf("%s isn't a directory of yours", dir)
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
+		if !fix {
+			return fmt.Errorf("%s is open to others", dir)
+		}
+		return os.Chmod(dir, 0o700)
+	}
+	return nil
+}
+
+// ownFile stats path if it's a plain file you own with one name: not a
+// link, not someone else's.
+func ownFile(path string) (os.FileInfo, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !fi.Mode().IsRegular() || !ok || int(st.Uid) != os.Getuid() || st.Nlink != 1 {
+		return nil, fmt.Errorf("%s isn't a plain file of yours", path)
+	}
+	return fi, nil
+}
+
+// readOwn reads a file ownFile accepts, without following a link swapped in
+// after the check.
+func readOwn(path string, limit int64) ([]byte, error) {
+	if _, err := ownFile(path); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, limit))
+}
+
 // Post writes a question for the app to show.
 func Post(a Ask) error {
-	if err := os.MkdirAll(Dir(), 0o700); err != nil {
+	if !ValidID(a.ID) {
+		return errors.New("bad question id")
+	}
+	if err := secureDir(); err != nil {
 		return err
 	}
 	b, err := json.Marshal(a)
@@ -108,7 +200,7 @@ func Wait(id string, deadline time.Time, stop <-chan struct{}, gone func() bool)
 	t := time.NewTicker(150 * time.Millisecond)
 	defer t.Stop()
 	for {
-		if b, err := os.ReadFile(answerPath(id)); err == nil {
+		if b, err := readOwn(answerPath(id), 1<<20); err == nil {
 			var ans Answer
 			if json.Unmarshal(b, &ans) == nil {
 				return ans, true
@@ -127,6 +219,9 @@ func Wait(id string, deadline time.Time, stop <-chan struct{}, gone func() bool)
 
 // Done removes a question and its answer.
 func Done(id string) {
+	if !ValidID(id) {
+		return
+	}
 	_ = os.Remove(askPath(id))
 	_ = os.Remove(answerPath(id))
 }
@@ -134,18 +229,21 @@ func Done(id string) {
 // Pending lists unanswered questions, oldest first, dropping any whose
 // deadline has passed (their hook has given up).
 func Pending(now time.Time) []Ask {
+	if checkDir(false) != nil {
+		return nil
+	}
 	files, _ := filepath.Glob(filepath.Join(Dir(), "*.json"))
 	var out []Ask
 	for _, f := range files {
 		if strings.HasSuffix(f, ".answer.json") {
 			continue
 		}
-		b, err := os.ReadFile(f)
+		b, err := readOwn(f, 1<<20)
 		if err != nil {
 			continue
 		}
 		var a Ask
-		if json.Unmarshal(b, &a) != nil {
+		if json.Unmarshal(b, &a) != nil || !ValidID(a.ID) || filepath.Base(f) != a.ID+".json" {
 			continue
 		}
 		if now.After(a.Deadline.Add(5*time.Second)) || (a.PID > 0 && !alive(a.PID)) {

@@ -4,6 +4,7 @@ package hub
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -104,6 +105,14 @@ func (h *Hub) collect(ctx context.Context, a model.Adapter) {
 		r.sessions, r.err = a.Collect(ctx)
 	}()
 	r.at = time.Now()
+	// Everything past here reaches a terminal or the app: agent text and
+	// other machines' snapshots don't get to carry escape sequences there.
+	for i := range r.sessions {
+		r.sessions[i].Sanitize()
+	}
+	if r.err != nil {
+		r.err = errors.New(model.Clean(r.err.Error()))
+	}
 
 	h.mu.Lock()
 	// Keep the last good rows if this pass failed outright, so a hiccup

@@ -278,6 +278,17 @@ func readPNG(path string) (image.Image, error) {
 		return nil, err
 	}
 	defer f.Close()
+	// A cached icon is small; a planted one mustn't decode into gigabytes.
+	cfg, err := png.DecodeConfig(f)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Width > 2048 || cfg.Height > 2048 {
+		return nil, fmt.Errorf("%s: %dx%d is too big for an icon", path, cfg.Width, cfg.Height)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
 	return png.Decode(f)
 }
 

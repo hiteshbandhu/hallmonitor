@@ -43,15 +43,24 @@ enum Asks {
     static func heartbeat() {
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
+        // Yours alone, as the hook expects; it ignores the notch otherwise.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir)
         let p = dir + "/.app-alive"
         if !FileManager.default.fileExists(atPath: p) {
-            FileManager.default.createFile(atPath: p, contents: nil)
+            FileManager.default.createFile(atPath: p, contents: nil, attributes: [.posixPermissions: 0o600])
         }
         try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: p)
     }
 
+    /// The shape the hook gives a question's id (ask.NewID). The id names
+    /// the answer file, so anything else is never written.
+    static func validID(_ id: String) -> Bool {
+        id.range(of: "^[0-9]{14}-[0-9a-f]{16}$", options: .regularExpression) != nil
+    }
+
     /// action: "answer" (with answers), "allow", "deny" or "pass".
     static func reply(_ id: String, action: String, answers: [String: [String]] = [:]) {
+        guard validID(id) else { return }
         var obj: [String: Any] = ["action": action]
         if !answers.isEmpty { obj["answers"] = answers }
         guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return }

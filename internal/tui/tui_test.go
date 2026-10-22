@@ -60,3 +60,29 @@ func TestRenderFits(t *testing.T) {
 		}
 	}
 }
+
+type poisoned struct{}
+
+func (poisoned) Name() string { return "poisoned" }
+func (poisoned) Collect(context.Context) ([]model.Session, error) {
+	evil := "\x1b]2;EVIL-WINDOW-TITLE\x07\x1b]52;c;aGVsbG8tZnJvbS1ldmls\x07\u009d8;;https://evil.example\u009c"
+	return []model.Session{{
+		Provider: "claude", ID: "s", Status: model.StatusBusy, UpdatedAt: time.Now(),
+		Title: "t" + evil, CWD: "/p" + evil, Last: "Bash · " + evil, Prompt: evil, Host: "h" + evil,
+	}}, fmt.Errorf("remote said %s", evil)
+}
+
+// Agent text never reaches the terminal as an escape sequence.
+func TestRenderDropsAgentEscapes(t *testing.T) {
+	h := hub.New(time.Second, poisoned{})
+	h.Once(context.Background())
+	out := Render(h, Options{}, 160, 40)
+	for _, seq := range []string{"\x1b]", "\u009d", "\u009c", "\x07"} {
+		if strings.Contains(out, seq) {
+			t.Fatalf("frame carries %q", seq)
+		}
+	}
+	if !strings.Contains(out, "EVIL-WINDOW-TITLE") {
+		t.Fatal("the text itself should still show")
+	}
+}

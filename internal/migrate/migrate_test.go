@@ -34,7 +34,7 @@ func TestFromAgentboard(t *testing.T) {
 		t.Error("data folder not moved:", err)
 	}
 	b, _ := os.ReadFile(settings)
-	want := `"command": "` + self + ` statusline --then 'my-line'"`
+	want := `"command": "'` + self + `' statusline --then 'my-line'"`
 	if !strings.Contains(string(b), want) || !strings.Contains(string(b), `"model": "opus"`) {
 		t.Errorf("settings now:\n%s", b)
 	}

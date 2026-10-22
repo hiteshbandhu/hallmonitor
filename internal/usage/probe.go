@@ -71,10 +71,10 @@ func (l *Ledger) MaybeProbeClaude(ctx context.Context) {
 
 // ProbeClaude reads plan limits from /usage now and saves them.
 func (l *Ledger) ProbeClaude(ctx context.Context) error {
-	if err := os.MkdirAll(l.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(l.Dir, 0o700); err != nil {
 		return err
 	}
-	lock, err := os.OpenFile(filepath.Join(l.Dir, ".probe-lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	lock, err := os.OpenFile(filepath.Join(l.Dir, ".probe-lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
@@ -112,7 +112,7 @@ func (l *Ledger) ProbeClaude(ctx context.Context) error {
 // returns what it drew, as plain text.
 func readUsageScreen(ctx context.Context) (string, error) {
 	dir := ProbeDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
 	defer cleanProbeTranscripts(dir)

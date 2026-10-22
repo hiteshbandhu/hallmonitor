@@ -5,6 +5,7 @@ package focus
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -64,8 +65,10 @@ func claudeAppSession(cliID string) string {
 		if err != nil {
 			continue
 		}
-		s := string(b)
-		if strings.Contains(s, `"cliSessionId":"`+cliID+`"`) || strings.Contains(s, `"cliSessionId": "`+cliID+`"`) {
+		var meta struct {
+			CLISessionID string `json:"cliSessionId"`
+		}
+		if json.Unmarshal(b, &meta) == nil && meta.CLISessionID == cliID {
 			return strings.TrimSuffix(filepath.Base(f), ".json")
 		}
 	}

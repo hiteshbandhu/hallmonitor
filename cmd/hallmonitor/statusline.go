@@ -45,7 +45,7 @@ func runStatusline(args []string) {
 	}
 	if json.Unmarshal(in, &raw) == nil {
 		_ = os.WriteFile(filepath.Join(usage.DefaultDir(), "claude-rate-limits-raw.json"),
-			[]byte(fmt.Sprintf("{\"at\":%q,\"rate_limits\":%s}\n", time.Now().Format(time.RFC3339), orNull(raw.RateLimits))), 0o644)
+			[]byte(fmt.Sprintf("{\"at\":%q,\"rate_limits\":%s}\n", time.Now().Format(time.RFC3339), orNull(raw.RateLimits))), 0o600)
 	}
 
 	if *then != "" {
@@ -128,8 +128,12 @@ func orNull(b json.RawMessage) string {
 	return string(b)
 }
 
+// shellQuote quotes s for sh unless every character is plainly safe, so a
+// path with a newline, "=" or "{" can't change the command either.
 func shellQuote(s string) string {
-	if !strings.ContainsAny(s, " '\"$`\\&|;<>()*?[]#~") {
+	if s != "" && !strings.ContainsFunc(s, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("/._-+:,@%", r))
+	}) {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
