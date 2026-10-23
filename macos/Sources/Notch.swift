@@ -142,7 +142,8 @@ struct NotchGeometry {
     static let rowHeight: CGFloat = 56
     /// The player's column beside the agents, and its height.
     static let playerWidth: CGFloat = 292
-    static let playerHeight: CGFloat = 170
+    /// As tall as a full agent list, so the two columns line up.
+    static let playerHeight: CGFloat = 4 * rowHeight
     /// The agent list's width, wide enough for a title and its status.
     var listWidth: CGFloat { max(notchWidth + 2 * ear, 480) }
     /// Room for a question card below the notch: most of the screen.
@@ -410,21 +411,9 @@ private struct PlayerCard: View {
     @State private var volume: Double?  // percent, while dragging
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                AlbumArt(image: track.art, size: 48)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(track.title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                    Text(track.artist)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-            }
+        VStack(spacing: 8) {
+            cover
+            VStack(spacing: 8) {
             progress
             // One centered group, as in Spotify: shuffle and repeat flank
             // the transport, so play sits in the middle.
@@ -445,10 +434,51 @@ private struct PlayerCard: View {
                 Spacer(minLength: 8)
                 if let v = track.volume { volumeSlider(v) }
             }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.white.opacity(0.07)))
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Color.white.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .onAppear { spotify.loadDevices() }
+    }
+
+    /// The cover across the top of the card, the track over its lower edge.
+    /// A fixed band with the art filling it from behind, so a square cover
+    /// can't stretch the band (and push the text out of it).
+    private var cover: some View {
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .frame(height: 116)
+            .background {
+                if let art = track.art {
+                    Image(nsImage: art).resizable().interpolation(.high).scaledToFill()
+                } else {
+                    LinearGradient(colors: [Color(white: 0.24), Color(white: 0.12)], startPoint: .top, endPoint: .bottom)
+                        .overlay(Image(systemName: "music.note").font(.system(size: 30, weight: .semibold)).foregroundStyle(.white.opacity(0.35)))
+                }
+            }
+            .overlay {
+                // Dark enough under the text for any cover.
+                LinearGradient(stops: [.init(color: .clear, location: 0.35), .init(color: .black.opacity(0.85), location: 1)],
+                               startPoint: .top, endPoint: .bottom)
+            }
+            .overlay(alignment: .bottomLeading) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(track.title)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Text(track.artist)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.75))
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 9)
+            }
+            .clipped()
     }
 
     private var progress: some View {
