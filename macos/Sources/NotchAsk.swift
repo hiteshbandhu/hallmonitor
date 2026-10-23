@@ -58,6 +58,18 @@ enum Asks {
         id.range(of: "^[0-9]{14}-[0-9a-f]{16}$", options: .regularExpression) != nil
     }
 
+    /// A tool as people read it (ask.ToolLabel in the CLI): an MCP tool's
+    /// mcp__server__tool_name as ("Tool name", "server").
+    static func toolLabel(_ tool: String) -> (name: String, server: String) {
+        guard tool.hasPrefix("mcp__") else { return (tool, "") }
+        let rest = tool.dropFirst(5)
+        guard let sep = rest.range(of: "__") else { return (tool, "") }
+        let server = String(rest[..<sep.lowerBound]), raw = String(rest[sep.upperBound...])
+        let words = raw.split(whereSeparator: { $0 == "_" || $0 == "-" }).joined(separator: " ")
+        guard !server.isEmpty, !words.isEmpty else { return (tool, "") }
+        return (words.prefix(1).uppercased() + words.dropFirst(), server)
+    }
+
     /// action: "answer" (with answers), "allow", "deny" or "pass".
     static func reply(_ id: String, action: String, answers: [String: [String]] = [:]) {
         guard validID(id) else { return }
@@ -131,9 +143,21 @@ struct AskCard: View {
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
-                Text(ask.kind == "permission" ? "wants to use \(ask.tool ?? "a tool")" : "has a question")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color(red: 1, green: 0.66, blue: 0.2))
+                Group {
+                    if ask.kind == "permission" {
+                        let (name, server) = Asks.toolLabel(ask.tool ?? "a tool")
+                        // An MCP tool by its name in words, then the server
+                        // it comes from, quieter.
+                        Text("wants to use \(name)")
+                            + Text(server.isEmpty ? "" : " · \(server)").foregroundColor(.white.opacity(0.45))
+                    } else {
+                        Text("has a question")
+                    }
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color(red: 1, green: 0.66, blue: 0.2))
+                .lineLimit(1)
+                .help(ask.tool ?? "")
             }
             Spacer(minLength: 8)
             if let d = ask.deadline {

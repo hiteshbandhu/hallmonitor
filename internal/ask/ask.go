@@ -77,6 +77,25 @@ type Answer struct {
 	Answers map[string][]string `json:"answers,omitempty"` // question text -> labels (or typed text)
 }
 
+// ToolLabel names a tool for people: an MCP tool's mcp__server__tool_name
+// reads as its name in words and the server it comes from ("Start session",
+// "ccd_session"); any other tool is its own name, with no server.
+func ToolLabel(tool string) (name, server string) {
+	rest, ok := strings.CutPrefix(tool, "mcp__")
+	if !ok {
+		return tool, ""
+	}
+	server, name, ok = strings.Cut(rest, "__")
+	if !ok || server == "" || name == "" {
+		return tool, ""
+	}
+	words := strings.Join(strings.FieldsFunc(name, func(r rune) bool { return r == '_' || r == '-' }), " ")
+	if words == "" {
+		return tool, ""
+	}
+	return strings.ToUpper(words[:1]) + words[1:], server
+}
+
 // Dir is where pending questions live.
 func Dir() string {
 	base := os.Getenv("XDG_DATA_HOME")
