@@ -37,7 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationDidFinishLaunching(_ note: Notification) {
         Main.migrateSettings()
-        UserDefaults.standard.register(defaults: ["notch": true, "notify": true, "showMenuBar": true, "showCount": false, "showLimit": true, "probeLimits": true])
+        UserDefaults.standard.register(defaults: ["notch": true, "notify": true, "showMenuBar": true, "showCount": false, "showLimit": true, "probeLimits": true,
+                                                  "spotifyNowPlaying": true, "spotifyPause": true])
         // Menu bar only, whatever Info.plist says (handy for debug builds).
         NSApp.setActivationPolicy(.accessory)
 
@@ -63,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         MainMenu.install(openPane: { [weak self] p in self?.main.show(p) }, settings: { [weak self] in self?.showSettings() })
         if CommandLine.arguments.contains("--window") { main.show() }
         notch.start(board: board)
+        Spotify.shared.start(board: board)
         defaultsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in

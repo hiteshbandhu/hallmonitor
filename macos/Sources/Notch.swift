@@ -171,7 +171,13 @@ final class NotchModel: ObservableObject {
     private var bannerTask: Task<Void, Never>?
     private var bag: Set<AnyCancellable> = []
 
-    var rowCount: Int { min(4, max(1, visible.count)) }
+    /// What Spotify is playing, when you've asked to see it.
+    @Published private(set) var nowPlaying: NowPlaying?
+
+    var rowCount: Int {
+        guard nowPlaying != nil else { return min(4, max(1, visible.count)) }
+        return min(4, visible.count) + 1 // the track replaces "No agents running"
+    }
 
     /// The oldest question waiting for an answer, and the agent asking it.
     @Published private(set) var asking: (session: Session, ask: PendingAsk)?
@@ -194,7 +200,7 @@ final class NotchModel: ObservableObject {
         }
         if hovering { return .expanded(rows: rowCount) }
         if banner != nil { return .banner }
-        if !working.isEmpty || !needsYou.isEmpty { return .compact }
+        if !working.isEmpty || !needsYou.isEmpty || nowPlaying?.isPlaying == true { return .compact }
         return .hidden
     }
 
@@ -208,6 +214,14 @@ final class NotchModel: ObservableObject {
 
     func attach(_ board: Board) {
         self.board = board
+        Spotify.shared.$nowPlaying
+            .combineLatest(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+                .map { _ in () }.prepend(()))
+            .map { np, _ in UserDefaults.standard.bool(forKey: "spotifyNowPlaying") ? np : nil }
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] np in self?.nowPlaying = np }
+            .store(in: &bag)
         board.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self, weak board] _ in
@@ -234,6 +248,9 @@ final class NotchModel: ObservableObject {
     }
 
     func layoutAsk(index: Int) { askIndex = index }
+
+    /// For snapshots: show a track without Spotify.
+    func previewMusic(_ np: NowPlaying?) { nowPlaying = np }
 
     /// For snapshots: show a question without the feed.
     func preview(_ s: Session, _ a: PendingAsk) { asking = (session: s, ask: a) }
@@ -296,10 +313,15 @@ struct NotchView: View {
                         .transition(.blurFade)
                 }
             case .expanded:
-                AgentList(sessions: Array(model.visible.prefix(4))) { model.open($0) }
-                    .padding(.horizontal, 8 + geo.shoulder)
-                    .padding(.top, 4)
-                    .transition(.blurFade)
+                VStack(spacing: 0) {
+                    if !model.visible.isEmpty || model.nowPlaying == nil {
+                        AgentList(sessions: Array(model.visible.prefix(4))) { model.open($0) }
+                    }
+                    if let np = model.nowPlaying { NowPlayingRow(track: np) }
+                }
+                .padding(.horizontal, 8 + geo.shoulder)
+                .padding(.top, 4)
+                .transition(.blurFade)
             default:
                 EmptyView()
             }
@@ -311,6 +333,9 @@ struct NotchView: View {
             Group {
                 if let first = model.needsYou.first ?? model.working.first {
                     AppIcon(provider: first.provider, size: 18)
+                        .transition(.scale.combined(with: .opacity))
+                } else if let np = model.nowPlaying, np.isPlaying {
+                    AlbumArt(image: np.art, size: 18)
                         .transition(.scale.combined(with: .opacity))
                 }
             }
@@ -331,6 +356,10 @@ struct NotchView: View {
                         Thinking(provider: model.working[0].provider)
                         if model.working.count > 1 { count(model.working.count) }
                     }
+                } else if model.nowPlaying?.isPlaying == true {
+                    Image(systemName: "waveform")
+                        .foregroundStyle(Color(red: 0.12, green: 0.84, blue: 0.38))
+                        .symbolEffect(.variableColor.iterative.dimInactiveLayers)
                 }
             }
             .font(.system(size: 12, weight: .semibold))
@@ -343,6 +372,71 @@ struct NotchView: View {
             .font(.system(size: 11, weight: .semibold, design: .rounded))
             .foregroundStyle(.white)
             .contentTransition(.numericText())
+    }
+}
+
+/// The track Spotify is playing, with play/pause and skip.
+private struct NowPlayingRow: View {
+    let track: NowPlaying
+    @State private var hovered: String?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            AlbumArt(image: track.art, size: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(track.title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Text(track.artist)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            button(track.isPlaying ? "pause.fill" : "play.fill", help: track.isPlaying ? "Pause" : "Play") {
+                Spotify.shared.togglePlay()
+            }
+            button("forward.fill", help: "Next") { Spotify.shared.next() }
+        }
+        .padding(.horizontal, 6)
+        .frame(height: NotchGeometry.rowHeight)
+    }
+
+    private func button(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(hovered == symbol ? 1 : 0.75))
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(.white.opacity(hovered == symbol ? 0.14 : 0.07)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 ? symbol : (hovered == symbol ? nil : hovered) }
+        .help(help)
+    }
+}
+
+/// A rounded album cover, or a note while it loads.
+struct AlbumArt: View {
+    let image: NSImage?
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().interpolation(.high).scaledToFill()
+            } else {
+                Image(systemName: "music.note")
+                    .font(.system(size: size * 0.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(.white.opacity(0.1))
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
     }
 }
 

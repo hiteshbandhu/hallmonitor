@@ -41,8 +41,9 @@ enum SnapshotMode {
                         }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                             render(model, geo, dir, "notch_banner_done")
-                            renderView(SettingsView(), size: NSSize(width: 460, height: 420), dir, "settings")
+                            renderView(SettingsView(), size: NSSize(width: 460, height: 980), dir, "settings")
                             renderAsks(board: board, geo: geo, dir: dir)
+                            renderMusic(geo: geo, dir: dir)
                             renderWindow(board: board, dir: dir) { NSApp.terminate(nil) }
                         }
                     }
@@ -79,6 +80,21 @@ enum SnapshotMode {
             renderView(NotchView(model: m).transaction { $0.animation = nil }, size: geo.canvas, dir, name)
             renderView(NotchView(model: m).transaction { $0.animation = nil }, size: geo.canvas, dir, name)
         }
+    }
+
+    /// Spotify playing with no agents around: the ears, then the hover list
+    /// (sample track and a drawn cover).
+    private static func renderMusic(geo: NotchGeometry, dir: String) {
+        let cover = NSImage(size: NSSize(width: 120, height: 120), flipped: false) { r in
+            NSGradient(colors: [.systemPink, .systemOrange, .systemYellow])?.draw(in: r, angle: 45)
+            return true
+        }
+        let m = NotchModel()
+        m.geometry = geo
+        m.previewMusic(NowPlaying(trackID: "snap", title: "Midnight City", artist: "M83", artURL: nil, art: cover, isPlaying: true, deviceID: nil))
+        render(m, geo, dir, "notch_music_compact")
+        m.hovering = true
+        render(m, geo, dir, "notch_music_expanded")
     }
 
     /// The main window, each pane, after a couple of snapshots of history.

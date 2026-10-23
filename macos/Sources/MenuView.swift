@@ -382,6 +382,10 @@ struct SettingsView: View {
     @AppStorage("showLimit") private var showLimit = true
     @AppStorage("probeLimits") private var probeLimits = true
     @AppStorage("answerFromNotch") private var answerFromNotch = false
+    @AppStorage("spotifyClientID") private var spotifyClientID = ""
+    @AppStorage("spotifyNowPlaying") private var spotifyNowPlaying = true
+    @AppStorage("spotifyPause") private var spotifyPause = true
+    @ObservedObject private var spotify = Spotify.shared
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
@@ -417,6 +421,36 @@ struct SettingsView: View {
             } footer: {
                 Text("Opens Claude Code's /usage in the background, so limits stay current even for sessions in the Claude app. Nothing is sent to the model, and Hall Monitor never sees your login.")
                     .font(.footnote).foregroundStyle(.secondary)
+            }
+            Section {
+                if spotify.connected {
+                    LabeledContent("Spotify") {
+                        HStack {
+                            Text("Connected").foregroundStyle(.secondary)
+                            Button("Disconnect") { spotify.disconnect() }
+                        }
+                    }
+                } else {
+                    TextField("Spotify client ID", text: $spotifyClientID, prompt: Text("32 letters and digits"))
+                    LabeledContent("Spotify") {
+                        Button(spotify.connecting ? "Waiting for your browser…" : "Connect") { spotify.connect() }
+                            .disabled(spotify.connecting || !Spotify.validClientID(spotifyClientID.trimmingCharacters(in: .whitespaces)))
+                    }
+                }
+                Toggle("Show what’s playing in the notch", isOn: $spotifyNowPlaying)
+                    .disabled(!spotify.connected)
+                Toggle("Pause music while an agent waits for you", isOn: $spotifyPause)
+                    .disabled(!spotify.connected)
+                if let p = spotify.problem {
+                    Text(p).font(.footnote).foregroundStyle(.red)
+                }
+            } footer: {
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("Needs Spotify Premium. Create an app at developer.spotify.com/dashboard with the Web API, add this redirect URI, and paste its client ID above:")
+                    Text(Spotify.redirectURI).textSelection(.enabled).monospaced()
+                    Text("Your sign-in is kept in the Keychain. Music resumes when no agent is waiting, unless you changed it meanwhile.")
+                }
+                .font(.footnote).foregroundStyle(.secondary)
             }
             Section {
                 Toggle("Launch at login", isOn: $launchAtLogin)
