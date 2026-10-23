@@ -108,7 +108,7 @@ struct GeneralSettings: View {
     var body: some View {
         SettingsPane {
             Section {
-                Toggle("Launch at login", isOn: $launchAtLogin)
+                Toggle("Open at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, on in
                         do {
                             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
@@ -116,7 +116,9 @@ struct GeneralSettings: View {
                             launchAtLogin = SMAppService.mainApp.status == .enabled
                         }
                     }
-                Toggle("Notify when an agent needs you or finishes", isOn: $notify)
+                Toggle("Notifications", isOn: $notify)
+            } footer: {
+                Footer("A notification when an agent needs you, or finishes a turn that took over a minute.")
             }
             Section {
                 Toggle("Show Hall Monitor in the menu bar", isOn: $showMenuBar)
@@ -149,7 +151,7 @@ struct NotchSettings: View {
                 Footer("While agents work, their icons sit beside the notch; hover it for the list. Only on Macs with a notch.")
             }
             Section {
-                Toggle("Answer Claude’s questions from the notch", isOn: $answerFromNotch)
+                Toggle("Answer Claude in the notch", isOn: $answerFromNotch)
                     .onChange(of: answerFromNotch) { _, on in
                         (NSApp.delegate as? AppDelegate)?.board.setAnswerHooks(on)
                     }
@@ -216,7 +218,7 @@ struct SpotifySettings: View {
             }
             Section {
                 Toggle("Show what’s playing in the notch", isOn: $nowPlaying)
-                Toggle("Pause music while an agent waits for you", isOn: $pause)
+                Toggle("Pause music while an agent waits", isOn: $pause)
             } footer: {
                 Footer("Music resumes once no agent is waiting, unless you changed it meanwhile. Your sign-in is kept in the Keychain.")
             }
@@ -228,6 +230,18 @@ struct SpotifySettings: View {
 // MARK: About
 
 struct AboutSettings: View {
+    private func link(_ title: String, _ url: String) -> some View {
+        Link(destination: URL(string: url)!) {
+            HStack {
+                Text(title).foregroundStyle(.primary)
+                Spacer()
+                Image(systemName: "arrow.up.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
     }
@@ -247,11 +261,18 @@ struct AboutSettings: View {
                 .padding(.vertical, 4)
             }
             Section {
-                LabeledContent("hallmonitor CLI") {
-                    Text(Board.binary).textSelection(.enabled).foregroundStyle(.secondary)
+                LabeledContent("Command line tool") {
+                    Button("Show in Finder") {
+                        NSWorkspace.shared.selectFile(Board.binary, inFileViewerRootedAtPath: "")
+                    }
+                    .help(Board.binary)
                 }
-                Link("github.com/hiteshbandhu/hallmonitor", destination: URL(string: "https://github.com/hiteshbandhu/hallmonitor")!)
-                Link("Report an issue", destination: URL(string: "https://github.com/hiteshbandhu/hallmonitor/issues")!)
+            } footer: {
+                Footer("Run hallmonitor in a terminal to see the board there.")
+            }
+            Section {
+                link("GitHub", "https://github.com/hiteshbandhu/hallmonitor")
+                link("Report an issue", "https://github.com/hiteshbandhu/hallmonitor/issues")
             }
         }
     }

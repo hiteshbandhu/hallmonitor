@@ -319,9 +319,11 @@ struct NotchView: View {
     @ViewBuilder
     private func island(geo: NotchGeometry, mode: NotchMode) -> some View {
         VStack(spacing: 0) {
+            // Open, the list says it all: the ears step aside.
             ears(geo: geo)
                 .frame(height: geo.notchHeight)
-                .opacity(mode == .hidden ? 0 : 1)
+                .opacity(mode == .hidden || mode == model.expandedMode ? 0 : 1)
+                .animation(.easeOut(duration: 0.15), value: mode)
             switch mode {
             case .banner:
                 if let e = model.banner { BannerRow(event: e).padding(.horizontal, 16 + geo.shoulder).transition(.blurFade) }
@@ -373,7 +375,7 @@ struct NotchView: View {
                 if !model.needsYou.isEmpty {
                     HStack(spacing: 3) {
                         Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(NotchPalette.amber)
                             .symbolEffect(.pulse)
                         if model.needsYou.count > 1 { count(model.needsYou.count) }
                     }
@@ -384,7 +386,7 @@ struct NotchView: View {
                     }
                 } else if model.nowPlaying?.isPlaying == true {
                     Image(systemName: "waveform")
-                        .foregroundStyle(Color(red: 0.12, green: 0.84, blue: 0.38))
+                        .foregroundStyle(NotchPalette.spotify)
                         .symbolEffect(.variableColor.iterative.dimInactiveLayers)
                 }
             }
@@ -444,41 +446,38 @@ private struct PlayerCard: View {
         .onAppear { spotify.loadDevices() }
     }
 
-    /// The cover across the top of the card, the track over its lower edge.
-    /// A fixed band with the art filling it from behind, so a square cover
-    /// can't stretch the band (and push the text out of it).
+    /// The top of the card: the whole cover, uncropped, with the track
+    /// beside it, over the same cover blurred and dimmed to fill the band.
     private var cover: some View {
-        Color.clear
-            .frame(maxWidth: .infinity)
-            .frame(height: 116)
-            .background {
-                if let art = track.art {
-                    Image(nsImage: art).resizable().interpolation(.high).scaledToFill()
-                } else {
-                    LinearGradient(colors: [Color(white: 0.24), Color(white: 0.12)], startPoint: .top, endPoint: .bottom)
-                        .overlay(Image(systemName: "music.note").font(.system(size: 30, weight: .semibold)).foregroundStyle(.white.opacity(0.35)))
-                }
+        HStack(spacing: 12) {
+            AlbumArt(image: track.art, size: 84)
+                .shadow(color: .black.opacity(0.45), radius: 8, y: 3)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(track.title)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                Text(track.artist)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .lineLimit(2)
             }
-            .overlay {
-                // Dark enough under the text for any cover.
-                LinearGradient(stops: [.init(color: .clear, location: 0.35), .init(color: .black.opacity(0.85), location: 1)],
-                               startPoint: .top, endPoint: .bottom)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity)
+        .frame(height: 112)
+        .background {
+            if let art = track.art {
+                Image(nsImage: art).resizable().scaledToFill()
+                    .blur(radius: 24)
+                    .saturation(1.3)
+                    .overlay(Color.black.opacity(0.45))
+            } else {
+                LinearGradient(colors: [Color(white: 0.2), Color(white: 0.1)], startPoint: .top, endPoint: .bottom)
             }
-            .overlay(alignment: .bottomLeading) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(track.title)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                    Text(track.artist)
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.75))
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 9)
-            }
-            .clipped()
+        }
+        .clipped()
     }
 
     private var progress: some View {
@@ -538,9 +537,13 @@ private struct PlayerCard: View {
             HStack(spacing: 4) {
                 Image(systemName: "hifispeaker.2")
                 Text(track.deviceName).lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
             }
             .font(.system(size: 10.5, weight: .medium))
-            .foregroundStyle(Color(red: 0.12, green: 0.84, blue: 0.38))
+            .foregroundStyle(.white.opacity(0.65))
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(Capsule().fill(.white.opacity(0.08)))
         }
         // Plain: our label as drawn, not an AppKit pop-up button's.
         .menuStyle(.button)
@@ -558,8 +561,12 @@ private struct PlayerCard: View {
         return Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: big ? 14 : 11.5, weight: .semibold))
-                .foregroundStyle(on ? Color(red: 0.12, green: 0.84, blue: 0.38) : .white.opacity(lit ? 1 : 0.75))
+                .foregroundStyle(.white.opacity(on || lit ? 1 : 0.75))
                 .frame(width: big ? 32 : 26, height: big ? 32 : 26)
+                // On (shuffle, repeat): a dot under the glyph, as in Spotify.
+                .overlay(alignment: .bottom) {
+                    if on { Circle().fill(NotchPalette.spotify).frame(width: 4, height: 4).offset(y: 1) }
+                }
                 .background(Circle().fill(.white.opacity(big ? (lit ? 0.2 : 0.12) : (lit ? 0.12 : 0))))
                 .contentShape(Circle())
         }
@@ -642,7 +649,7 @@ private struct BannerRow: View {
 
     private var tint: Color {
         switch event {
-        case .needsYou: return .orange
+        case .needsYou: return NotchPalette.amber
         default: return .green
         }
     }
@@ -724,18 +731,24 @@ private struct AgentRow: View {
 
     private var activity: String {
         if let last = session.last, !last.isEmpty {
-            return last.hasPrefix("↳ ") ? "“" + plain(String(last.dropFirst(2))) + "”" : "▸ " + last
+            return last.hasPrefix("↳ ") ? "“" + plain(String(last.dropFirst(2))) + "”" : "▸ " + plain(last)
         }
         if let p = session.prompt { return "Asked “\(p)”" }
         return "No activity yet"
     }
 
-    /// Drops markdown emphasis and code marks from a reply snippet.
+    /// A reply snippet as plain words: markdown links become their text,
+    /// bare links lose their scheme, and emphasis, code marks and stray
+    /// whitespace go.
     private func plain(_ s: String) -> String {
-        s.replacingOccurrences(of: "**", with: "")
+        s.replacingOccurrences(of: #"\[([^\]]*)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: #"https?://(www\.)?"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: "**", with: "")
             .replacingOccurrences(of: "`", with: "")
             .replacingOccurrences(of: #"^#+\s*"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: " - ", with: " · ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
     }
 
     private var meta: String {
@@ -753,14 +766,21 @@ private struct AgentRow: View {
         return "\(word) · \(shortDuration(now.timeIntervalSince(since)))"
     }
 
+    /// One meaning per color: amber needs you, red failed. Working is plain
+    /// white (the spinner says it's busy); green belongs to the player.
     private var color: Color {
         switch session.status {
-        case "busy": return .green
-        case "waiting": return .orange
+        case "busy": return .white.opacity(0.9)
+        case "waiting": return NotchPalette.amber
         case "error": return .red
-        default: return .white.opacity(0.5)
+        default: return .white.opacity(0.45)
         }
     }
+}
+
+enum NotchPalette {
+    static let amber = Color(red: 1, green: 0.70, blue: 0.25)
+    static let spotify = Color(red: 0.12, green: 0.84, blue: 0.38)
 }
 
 /// Each tool's own "thinking" animation: Claude Code's cycling ✻ glyph in

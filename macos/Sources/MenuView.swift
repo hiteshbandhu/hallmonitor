@@ -147,16 +147,16 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
         usage()
 
-        // The switches you flip day to day; the rest is in Settings.
+        menu.addItem(.separator())
+        menu.addItem(action("Open Hall Monitor", "rectangle.grid.2x2", key: "o", #selector(openBoard)))
+        menu.addItem(action("Open in Terminal", "terminal", key: "t", #selector(openTerminal)))
+
+        // The switches you flip day to day, worded as in Settings.
         menu.addItem(.separator())
         menu.addItem(toggle("Show Agents Around the Notch", "notch"))
         menu.addItem(toggle("Notifications", "notify"))
         menu.addItem(toggle("Answer Claude in the Notch", "answerFromNotch"))
-        if Spotify.shared.connected { menu.addItem(toggle("Pause Music for Agents", "spotifyPause")) }
-
-        menu.addItem(.separator())
-        menu.addItem(action("Open Hall Monitor", "rectangle.grid.2x2", key: "o", #selector(openBoard)))
-        menu.addItem(action("Board in Terminal", "terminal", key: "t", #selector(openTerminal)))
+        if Spotify.shared.connected { menu.addItem(toggle("Pause Music While an Agent Waits", "spotifyPause")) }
         menu.addItem(.separator())
         menu.addItem(action("Settings…", "gearshape", key: ",", #selector(openSettings)))
         menu.addItem(action("About Hall Monitor", "info.circle", key: "", #selector(about)))
