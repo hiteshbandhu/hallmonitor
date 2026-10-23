@@ -28,7 +28,28 @@ struct PendingAsk: Decodable, Hashable {
     var tool: String?
     var detail: String?
     var complete: Bool?
+    var form: [FormBlock]?
+    var form_complete: Bool?
+    var always: [String]?
     var deadline: Date?
+
+    /// Allow approves all of it: only offered when all of it is on screen,
+    /// as the form (when there is one) or the plain detail.
+    var canAllow: Bool { form?.isEmpty == false ? form_complete == true : complete == true }
+}
+
+/// One piece of a permission form, laid out by the hook (ask.Block).
+struct FormBlock: Decodable, Hashable {
+    var kind: String
+    var label: String?
+    var text: String?
+    var icon: String?
+    var mono: Bool?
+    var diff: [DiffLine]?
+    var items: [Chip]?
+
+    struct DiffLine: Decodable, Hashable { var op: String; var text: String }
+    struct Chip: Decodable, Hashable { var text: String; var warn: Bool? }
 }
 
 enum Asks {
@@ -71,10 +92,11 @@ enum Asks {
     }
 
     /// action: "answer" (with answers), "allow", "deny" or "pass".
-    static func reply(_ id: String, action: String, answers: [String: [String]] = [:]) {
+    static func reply(_ id: String, action: String, answers: [String: [String]] = [:], always: Int? = nil) {
         guard validID(id) else { return }
         var obj: [String: Any] = ["action": action]
         if !answers.isEmpty { obj["answers"] = answers }
+        if let always { obj["always"] = always }
         guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
         let tmp = dir + "/\(id).answer.json.tmp"
         FileManager.default.createFile(atPath: tmp, contents: data, attributes: [.posixPermissions: 0o600])
@@ -86,6 +108,11 @@ enum Asks {
 func askHeight(_ a: PendingAsk, index: Int) -> CGFloat {
     let header: CGFloat = 46, footer: CGFloat = 30, pad: CGFloat = 18
     if a.kind == "permission" {
+        if let form = a.form, !form.isEmpty {
+            // A first guess only: the card measures itself right after.
+            let text = form.reduce(0) { $0 + ($1.text?.count ?? 0) / 56 + ($1.diff?.count ?? 0) + 1 }
+            return header + min(420, CGFloat(form.count) * 22 + CGFloat(text) * 15) + 38 + CGFloat(a.always?.count ?? 0) * 26 + footer + pad
+        }
         let lines = min(3, max(1, ((a.detail ?? "").count + 55) / 56))
         return header + CGFloat(lines) * 16 + 18 + 38 + footer + pad
     }
@@ -237,26 +264,49 @@ struct AskCard: View {
 
     private var permission: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(ask.detail ?? "")
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.9))
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(.white.opacity(0.07)))
-                .textSelection(.enabled)
+            if let form = ask.form, !form.isEmpty {
+                PermissionForm(blocks: form)
+            } else {
+                Text(ask.detail ?? "")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(.white.opacity(0.07)))
+                    .textSelection(.enabled)
+            }
             HStack(spacing: 8) {
-                if ask.complete != true {
-                    // Allow approves all of it; only offer it when all of it is shown.
+                if !ask.canAllow {
                     Text("Too long to show in full: allow it in Claude")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.5))
                 }
                 Spacer()
                 Button("Deny") { finish("deny") }.buttonStyle(NotchButton(kind: .secondary))
-                if ask.complete == true {
+                if ask.canAllow {
                     Button("Allow") { finish("allow") }.buttonStyle(NotchButton(kind: .primary))
                 }
+            }
+            // Claude Code's own "don't ask again" choices, as it words them.
+            if ask.canAllow, let always = ask.always, !always.isEmpty {
+                VStack(alignment: .trailing, spacing: 2) {
+                    ForEach(Array(always.enumerated()), id: \.offset) { i, label in
+                        Button {
+                            Asks.reply(ask.id, action: "always", always: i)
+                            model.answered(ask.id)
+                        } label: {
+                            Label(label, systemImage: "checkmark.seal")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.6))
+                                .lineLimit(2)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Allow, and don’t ask again")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
     }

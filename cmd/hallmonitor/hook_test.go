@@ -15,7 +15,7 @@ func TestHookOutput(t *testing.T) {
 	_ = json.Unmarshal(questions, &a.Questions)
 
 	out := hookOutput("PreToolUse", a, questions, ask.Answer{Action: "answer",
-		Answers: map[string][]string{"Colour?": {"Blue"}, "Sizes?": {"S", "M"}}})
+		Answers: map[string][]string{"Colour?": {"Blue"}, "Sizes?": {"S", "M"}}}, nil)
 	b, _ := json.Marshal(out)
 	for _, want := range []string{`"permissionDecision":"allow"`, `"Colour?":"Blue"`, `"Sizes?":["S","M"]`, `"questions":[`} {
 		if !strings.Contains(string(b), want) {
@@ -23,19 +23,19 @@ func TestHookOutput(t *testing.T) {
 		}
 	}
 	// One question left unanswered: say nothing, Claude asks as usual.
-	if hookOutput("PreToolUse", a, questions, ask.Answer{Action: "answer", Answers: map[string][]string{"Colour?": {"Red"}}}) != nil {
+	if hookOutput("PreToolUse", a, questions, ask.Answer{Action: "answer", Answers: map[string][]string{"Colour?": {"Red"}}}, nil) != nil {
 		t.Error("answered an incomplete set")
 	}
-	if hookOutput("PreToolUse", a, questions, ask.Answer{Action: "pass"}) != nil {
+	if hookOutput("PreToolUse", a, questions, ask.Answer{Action: "pass"}, nil) != nil {
 		t.Error("pass should fall back")
 	}
 
 	p := ask.Ask{Kind: ask.KindPermission, Tool: "Bash", Complete: true}
-	b, _ = json.Marshal(hookOutput("PermissionRequest", p, nil, ask.Answer{Action: "deny"}))
+	b, _ = json.Marshal(hookOutput("PermissionRequest", p, nil, ask.Answer{Action: "deny"}, nil))
 	if !strings.Contains(string(b), `"behavior":"deny"`) || !strings.Contains(string(b), `"hookEventName":"PermissionRequest"`) {
 		t.Errorf("deny: %s", b)
 	}
-	b, _ = json.Marshal(hookOutput("PermissionRequest", p, nil, ask.Answer{Action: "allow"}))
+	b, _ = json.Marshal(hookOutput("PermissionRequest", p, nil, ask.Answer{Action: "allow"}, nil))
 	if !strings.Contains(string(b), `"behavior":"allow"`) {
 		t.Errorf("allow: %s", b)
 	}
@@ -87,10 +87,10 @@ func TestPermissionDetail(t *testing.T) {
 	}
 	// Cut short: an allow from the notch isn't passed on.
 	p := ask.Ask{Kind: ask.KindPermission, Tool: "Bash"}
-	if hookOutput("PermissionRequest", p, nil, ask.Answer{Action: "allow"}) != nil {
+	if hookOutput("PermissionRequest", p, nil, ask.Answer{Action: "allow"}, nil) != nil {
 		t.Error("allowed what wasn't shown in full")
 	}
-	if hookOutput("PermissionRequest", p, nil, ask.Answer{Action: "deny"}) == nil {
+	if hookOutput("PermissionRequest", p, nil, ask.Answer{Action: "deny"}, nil) == nil {
 		t.Error("deny should still go through")
 	}
 }

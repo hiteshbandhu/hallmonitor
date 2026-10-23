@@ -52,8 +52,23 @@ enum SnapshotMode {
     }
 
     /// The notch asking a question, and asking for permission (sample data).
+    /// With HALLMONITOR_SNAPSHOT_ASKS set to a folder of questions the hook
+    /// posted, each of those too, as notch_form_<file>.
     private static func renderAsks(board: Board, geo: NotchGeometry, dir: String) {
         guard let s = board.sessions.first(where: { $0.provider == "claude" }) ?? board.sessions.first else { return }
+        if let folder = ProcessInfo.processInfo.environment["HALLMONITOR_SNAPSHOT_ASKS"],
+           let files = try? FileManager.default.contentsOfDirectory(atPath: folder) {
+            for f in files.sorted() where f.hasSuffix(".json") {
+                guard let data = FileManager.default.contents(atPath: folder + "/" + f),
+                      let a = try? Board.decoder.decode(PendingAsk.self, from: data) else { continue }
+                let m = NotchModel()
+                m.geometry = geo
+                m.preview(s, a)
+                let name = "notch_form_" + f.replacingOccurrences(of: ".json", with: "")
+                renderView(NotchView(model: m).transaction { $0.animation = nil }, size: geo.canvas, dir, name)
+                renderView(NotchView(model: m).transaction { $0.animation = nil }, size: geo.canvas, dir, name)
+            }
+        }
         let soon = Date().addingTimeInterval(102)
         let q = PendingAsk(id: "snap-q", session_id: s.id, kind: "question", questions: [
             AskQuestion(question: "The webhook retries fail on duplicate events. How should I handle them?", header: "Approach",
