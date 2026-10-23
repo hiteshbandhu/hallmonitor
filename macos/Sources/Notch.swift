@@ -176,7 +176,8 @@ final class NotchModel: ObservableObject {
 
     var rowCount: Int {
         guard nowPlaying != nil else { return min(4, max(1, visible.count)) }
-        return min(4, visible.count) + 1 // the track replaces "No agents running"
+        // The player takes two rows, and replaces "No agents running".
+        return min(4, visible.count) + 2
     }
 
     /// The oldest question waiting for an answer, and the agent asking it.
@@ -286,6 +287,9 @@ struct NotchView: View {
                 island(geo: geo, mode: mode)
                     .frame(width: size.width + 2 * geo.shoulder, height: size.height, alignment: .top)
                     .background(IslandShape(radius: geo.radius(for: mode), shoulder: geo.shoulder).fill(.black))
+                    // Flattened before clipping: clipped layers lost their
+                    // colors (a green repeat button drew white).
+                    .compositingGroup()
                     .clipShape(IslandShape(radius: geo.radius(for: mode), shoulder: geo.shoulder))
                     .shadow(color: .black.opacity(mode == .compact || mode == .hidden ? 0 : 0.35), radius: 14, y: 6)
                 Spacer(minLength: 0)
@@ -317,7 +321,7 @@ struct NotchView: View {
                     if !model.visible.isEmpty || model.nowPlaying == nil {
                         AgentList(sessions: Array(model.visible.prefix(4))) { model.open($0) }
                     }
-                    if let np = model.nowPlaying { NowPlayingRow(track: np) }
+                    if let np = model.nowPlaying { PlayerCard(track: np) }
                 }
                 .padding(.horizontal, 8 + geo.shoulder)
                 .padding(.top, 4)
@@ -375,46 +379,149 @@ struct NotchView: View {
     }
 }
 
-/// The track Spotify is playing, with play/pause and skip.
-private struct NowPlayingRow: View {
+/// Spotify's player: the track and where it's playing, a bar you can drag
+/// to seek, and every control the Web API offers.
+private struct PlayerCard: View {
     let track: NowPlaying
+    @ObservedObject private var spotify = Spotify.shared
     @State private var hovered: String?
+    @State private var scrub: Double?   // seconds, while dragging the bar
+    @State private var volume: Double?  // percent, while dragging
 
     var body: some View {
-        HStack(spacing: 10) {
-            AlbumArt(image: track.art, size: 30)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(track.title)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                Text(track.artist)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .lineLimit(1)
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                AlbumArt(image: track.art, size: 40)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(track.title)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Text(track.artist)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 4) {
+                    devicePicker
+                    if let v = track.volume { volumeSlider(v) }
+                }
             }
-            Spacer(minLength: 8)
-            button(track.isPlaying ? "pause.fill" : "play.fill", help: track.isPlaying ? "Pause" : "Play") {
-                Spotify.shared.togglePlay()
+            progress
+            // One centered group, as in Spotify: shuffle and repeat flank
+            // the transport, so play sits in the middle.
+            HStack(spacing: 14) {
+                button("shuffle", on: track.shuffle, help: track.shuffle ? "Shuffle is on" : "Shuffle",
+                       off: "toggling_shuffle") { spotify.toggleShuffle() }
+                button("backward.fill", help: "Previous", off: "skipping_prev") { spotify.previous() }
+                button(track.isPlaying ? "pause.fill" : "play.fill", big: true, help: track.isPlaying ? "Pause" : "Play",
+                       off: track.isPlaying ? "pausing" : "resuming") { spotify.togglePlay() }
+                button("forward.fill", help: "Next", off: "skipping_next") { spotify.next() }
+                button(track.repeatMode == "track" ? "repeat.1" : "repeat", on: track.repeatMode != "off",
+                       help: ["off": "Repeat", "context": "Repeating all", "track": "Repeating this track"][track.repeatMode] ?? "Repeat",
+                       off: track.repeatMode == "off" ? "toggling_repeat_context" : "toggling_repeat_track") { spotify.cycleRepeat() }
             }
-            button("forward.fill", help: "Next") { Spotify.shared.next() }
+            .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 6)
-        .frame(height: NotchGeometry.rowHeight)
+        .padding(.vertical, 8)
+        .frame(height: 2 * NotchGeometry.rowHeight)
+        .onAppear { spotify.loadDevices() }
     }
 
-    private func button(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private var progress: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+            let now = scrub ?? track.position(at: ctx.date)
+            HStack(spacing: 8) {
+                Text(time(now)).frame(width: 34, alignment: .trailing)
+                Slider(value: Binding(get: { now }, set: { scrub = $0 }), in: 0...max(1, track.duration)) { editing in
+                    if !editing, let s = scrub {
+                        spotify.seek(to: s)
+                        scrub = nil
+                    }
+                }
+                .controlSize(.mini)
+                .tint(.white)
+                .disabled(track.disallows.contains("seeking") || track.duration == 0)
+                Text("-" + time(max(0, track.duration - now))).frame(width: 38, alignment: .leading)
+            }
+            .font(.system(size: 10, weight: .medium).monospacedDigit())
+            .foregroundStyle(.white.opacity(0.5))
+        }
+    }
+
+    private func volumeSlider(_ v: Int) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: (volume.map(Int.init) ?? v) == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.55))
+            Slider(value: Binding(get: { volume ?? Double(v) }, set: { volume = $0 }), in: 0...100) { editing in
+                if !editing, let n = volume {
+                    spotify.setVolume(Int(n.rounded()))
+                    volume = nil
+                }
+            }
+            .controlSize(.mini)
+            .tint(.white)
+            .frame(width: 70)
+        }
+        .help("Volume on \(track.deviceName)")
+    }
+
+    /// Where it plays, and the other places it could.
+    private var devicePicker: some View {
+        Menu {
+            if spotify.devices.isEmpty {
+                Text("No other devices are open")
+            }
+            ForEach(spotify.devices) { d in
+                Button {
+                    spotify.play(on: d)
+                } label: {
+                    Label(d.name + (d.active ? " ✓" : ""), systemImage: d.symbol)
+                }
+                .disabled(d.active)
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "hifispeaker.2")
+                Text(track.deviceName).lineLimit(1)
+            }
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundStyle(Color(red: 0.12, green: 0.84, blue: 0.38))
+        }
+        // Plain: our label as drawn, not an AppKit pop-up button's.
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(track.disallows.contains("transferring_playback"))
+        .help("Play on another device")
+    }
+
+    private func button(_ symbol: String, big: Bool = false, on: Bool = false, help: String, off disallow: String,
+                        action: @escaping () -> Void) -> some View {
+        let blocked = track.disallows.contains(disallow)
+        let lit = hovered == symbol && !blocked
+        return Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(hovered == symbol ? 1 : 0.75))
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(.white.opacity(hovered == symbol ? 0.14 : 0.07)))
+                .font(.system(size: big ? 14 : 11.5, weight: .semibold))
+                .foregroundStyle(on ? Color(red: 0.12, green: 0.84, blue: 0.38) : .white.opacity(lit ? 1 : 0.75))
+                .frame(width: big ? 32 : 26, height: big ? 32 : 26)
+                .background(Circle().fill(.white.opacity(big ? (lit ? 0.2 : 0.12) : (lit ? 0.12 : 0))))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .disabled(blocked)
+        .opacity(blocked ? 0.35 : 1)
         .onHover { hovered = $0 ? symbol : (hovered == symbol ? nil : hovered) }
         .help(help)
+    }
+
+    private func time(_ t: TimeInterval) -> String {
+        let s = max(0, Int(t))
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 }
 

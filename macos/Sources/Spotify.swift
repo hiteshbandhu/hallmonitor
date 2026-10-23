@@ -20,6 +20,40 @@ struct NowPlaying: Equatable {
     var art: NSImage?
     var isPlaying: Bool
     var deviceID: String?
+    var deviceName: String = ""
+    var progress: TimeInterval = 0
+    var duration: TimeInterval = 0
+    /// When progress was read: the bar moves on from there between polls.
+    var at = Date()
+    var shuffle = false
+    var repeatMode = "off" // "off", "context" (all) or "track" (one)
+    var volume: Int?        // nil when the device can't change it
+    /// What Spotify won't do right now (an ad, a device that can't seek…).
+    var disallows: Set<String> = []
+
+    /// Where the track is now.
+    func position(at now: Date) -> TimeInterval {
+        min(duration, progress + (isPlaying ? now.timeIntervalSince(at) : 0))
+    }
+}
+
+struct SpotifyDevice: Identifiable, Hashable {
+    var id: String
+    var name: String
+    var type: String
+    var active: Bool
+
+    var symbol: String {
+        switch type.lowercased() {
+        case "computer": return "laptopcomputer"
+        case "smartphone": return "iphone"
+        case "speaker": return "hifispeaker"
+        case "tv": return "tv"
+        case "tablet": return "ipad"
+        case "automobile": return "car"
+        default: return "speaker.wave.2"
+        }
+    }
 }
 
 @MainActor
@@ -30,6 +64,7 @@ final class Spotify: ObservableObject {
     @Published private(set) var connecting = false
     @Published private(set) var nowPlaying: NowPlaying?
     @Published private(set) var problem: String?
+    @Published private(set) var devices: [SpotifyDevice] = []
 
     /// Register exactly this as the app's redirect URI.
     static let port: UInt16 = 43821
@@ -169,27 +204,35 @@ final class Spotify: ObservableObject {
 
     // MARK: player
 
-    private func api(_ method: String, _ path: String, device: String? = nil, retry: Bool = true) async throws -> (Data, Int) {
+    private func api(_ method: String, _ path: String, device: String? = nil, query: [String: String] = [:],
+                     body: Data? = nil, retry: Bool = true) async throws -> (Data, Int) {
         var c = URLComponents(string: "https://api.spotify.com/v1/me/player" + path)!
-        if let device { c.queryItems = [URLQueryItem(name: "device_id", value: device)] }
+        var items = query.map { URLQueryItem(name: $0.key, value: $0.value) }
+        if let device { items.append(URLQueryItem(name: "device_id", value: device)) }
+        if !items.isEmpty { c.queryItems = items }
         var req = URLRequest(url: c.url!)
         req.httpMethod = method
         req.timeoutInterval = 8
         req.setValue("Bearer \(try await validToken())", forHTTPHeaderField: "Authorization")
-        if method != "GET" { req.setValue("0", forHTTPHeaderField: "Content-Length") }
+        if let body {
+            req.httpBody = body
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        } else if method != "GET" {
+            req.setValue("0", forHTTPHeaderField: "Content-Length")
+        }
         let (data, resp) = try await URLSession.shared.data(for: req)
         let http = resp as? HTTPURLResponse
         let status = http?.statusCode ?? 0
         switch status {
         case 401 where retry:
             expires = .distantPast
-            return try await api(method, path, device: device, retry: false)
+            return try await api(method, path, device: device, query: query, body: body, retry: false)
         case 429:
             let wait = Double(http?.value(forHTTPHeaderField: "Retry-After") ?? "") ?? 30
             pollPaused = Date().addingTimeInterval(wait)
             throw SpotifyError("Spotify asked Hall Monitor to slow down.")
         case 403 where method != "GET":
-            throw SpotifyError("Spotify only lets Premium accounts control playback.")
+            throw SpotifyError("Spotify didn't allow that: control needs Premium, and some actions are off during ads.")
         default:
             return (data, status)
         }
@@ -203,6 +246,7 @@ final class Spotify: ObservableObject {
         struct Item: Decodable {
             var id: String?
             var name: String
+            var duration_ms: Double?
             var artists: [Artist]?
             var album: Album?
             struct Artist: Decodable { var name: String }
@@ -210,9 +254,14 @@ final class Spotify: ObservableObject {
         }
         struct State: Decodable {
             var is_playing: Bool
+            var progress_ms: Double?
+            var shuffle_state: Bool?
+            var repeat_state: String?
             var device: Device?
             var item: Item?
-            struct Device: Decodable { var id: String? }
+            var actions: Actions?
+            struct Device: Decodable { var id: String?; var name: String?; var volume_percent: Int?; var supports_volume: Bool? }
+            struct Actions: Decodable { var disallows: [String: Bool]? }
         }
         guard let s = try? JSONDecoder().decode(State.self, from: data), let item = s.item else { return nil }
         // The smallest cover that's still sharp at 60 pt on a Retina screen.
@@ -222,7 +271,11 @@ final class Spotify: ObservableObject {
             trackID: item.id ?? item.name, title: item.name,
             artist: (item.artists ?? []).map(\.name).joined(separator: ", "),
             artURL: cover.flatMap { URL(string: $0.url) }, art: nil,
-            isPlaying: s.is_playing, deviceID: s.device?.id)
+            isPlaying: s.is_playing, deviceID: s.device?.id, deviceName: s.device?.name ?? "",
+            progress: (s.progress_ms ?? 0) / 1000, duration: (item.duration_ms ?? 0) / 1000, at: Date(),
+            shuffle: s.shuffle_state ?? false, repeatMode: s.repeat_state ?? "off",
+            volume: s.device?.supports_volume == false ? nil : s.device?.volume_percent,
+            disallows: Set((s.actions?.disallows ?? [:]).filter(\.value).map(\.key)))
     }
 
     func refresh() async {
@@ -250,18 +303,82 @@ final class Spotify: ObservableObject {
         if nowPlaying?.artURL == url { nowPlaying?.art = img }
     }
 
+    // Each control updates the notch at once, then the next poll corrects it.
+
     func togglePlay() {
         guard let np = nowPlaying else { return }
-        nowPlaying?.isPlaying.toggle() // feels instant; the next poll corrects it
-        control(np.isPlaying ? "pause" : "play", device: np.deviceID)
+        nowPlaying?.progress = np.position(at: Date())
+        nowPlaying?.at = Date()
+        nowPlaying?.isPlaying.toggle()
+        control(np.isPlaying ? "/pause" : "/play", device: np.deviceID)
     }
 
-    func next() { control("next", device: nowPlaying?.deviceID, method: "POST") }
+    func next() { control("/next", device: nowPlaying?.deviceID, method: "POST") }
 
-    private func control(_ path: String, device: String?, method: String = "PUT") {
+    /// Like a CD player: back to the start, or to the previous track when
+    /// already near it.
+    func previous() {
+        guard let np = nowPlaying else { return }
+        if np.position(at: Date()) > 3, !np.disallows.contains("seeking") {
+            seek(to: 0)
+        } else {
+            control("/previous", device: np.deviceID, method: "POST")
+        }
+    }
+
+    func seek(to seconds: TimeInterval) {
+        guard let np = nowPlaying else { return }
+        nowPlaying?.progress = seconds
+        nowPlaying?.at = Date()
+        control("/seek", device: np.deviceID, query: ["position_ms": String(Int(seconds * 1000))])
+    }
+
+    func toggleShuffle() {
+        guard let np = nowPlaying else { return }
+        nowPlaying?.shuffle.toggle()
+        control("/shuffle", device: np.deviceID, query: ["state": np.shuffle ? "false" : "true"])
+    }
+
+    /// Off → all → one → off, as in Spotify itself.
+    func cycleRepeat() {
+        guard let np = nowPlaying else { return }
+        let next = ["off": "context", "context": "track"][np.repeatMode] ?? "off"
+        nowPlaying?.repeatMode = next
+        control("/repeat", device: np.deviceID, query: ["state": next])
+    }
+
+    func setVolume(_ percent: Int) {
+        guard let np = nowPlaying, np.volume != nil else { return }
+        let v = min(100, max(0, percent))
+        nowPlaying?.volume = v
+        control("/volume", device: np.deviceID, query: ["volume_percent": String(v)])
+    }
+
+    /// The devices Spotify can play on now (open apps, speakers, the web player).
+    func loadDevices() {
+        Task {
+            guard let (data, status) = try? await api("GET", "/devices"), status == 200 else { return }
+            struct List: Decodable {
+                var devices: [D]
+                struct D: Decodable { var id: String?; var name: String; var type: String; var is_active: Bool }
+            }
+            devices = ((try? JSONDecoder().decode(List.self, from: data))?.devices ?? [])
+                .compactMap { d in d.id.map { SpotifyDevice(id: $0, name: d.name, type: d.type, active: d.is_active) } }
+        }
+    }
+
+    /// Moves playback to another device and keeps it playing.
+    func play(on device: SpotifyDevice) {
+        let body = try? JSONSerialization.data(withJSONObject: ["device_ids": [device.id], "play": true])
+        nowPlaying?.deviceName = device.name
+        control("", device: nil, body: body)
+        devices = devices.map { var d = $0; d.active = d.id == device.id; return d }
+    }
+
+    private func control(_ path: String, device: String?, method: String = "PUT", query: [String: String] = [:], body: Data? = nil) {
         Task {
             do {
-                _ = try await api(method, "/" + path, device: device)
+                _ = try await api(method, path, device: device, query: query, body: body)
                 problem = nil
             } catch {
                 problem = error.localizedDescription

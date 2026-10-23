@@ -77,10 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func showSettings() {
         if settingsWindow == nil {
-            let w = NSWindow(contentViewController: NSHostingController(rootView: SettingsView()))
-            w.title = "Hall Monitor Settings"
-            w.styleMask = [.titled, .closable]
-            w.isReleasedWhenClosed = false
+            let w = SettingsWindow.make()
             w.center()
             settingsWindow = w
         }

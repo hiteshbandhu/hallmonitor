@@ -41,7 +41,9 @@ enum SnapshotMode {
                         }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                             render(model, geo, dir, "notch_banner_done")
-                            renderView(SettingsView(), size: NSSize(width: 460, height: 980), dir, "settings")
+                            for tab in SettingsTab.allCases {
+                                renderView(tab.view, size: NSSize(width: 480, height: 460), dir, "settings_\(tab.rawValue)", opaque: true)
+                            }
                             renderAsks(board: board, geo: geo, dir: dir)
                             renderMusic(geo: geo, dir: dir)
                             renderWindow(board: board, dir: dir) { NSApp.terminate(nil) }
@@ -91,10 +93,14 @@ enum SnapshotMode {
         }
         let m = NotchModel()
         m.geometry = geo
-        m.previewMusic(NowPlaying(trackID: "snap", title: "Midnight City", artist: "M83", artURL: nil, art: cover, isPlaying: true, deviceID: nil))
+        m.previewMusic(NowPlaying(trackID: "snap", title: "Midnight City", artist: "M83", artURL: nil, art: cover, isPlaying: true, deviceID: nil, deviceName: "MacBook Pro",
+                                   progress: 83, duration: 243, at: Date(), shuffle: true, repeatMode: "context", volume: 64))
         render(m, geo, dir, "notch_music_compact")
         m.hovering = true
         render(m, geo, dir, "notch_music_expanded")
+        m.previewMusic(NowPlaying(trackID: "snap", title: "Midnight City", artist: "M83", artURL: nil, art: cover, isPlaying: false, deviceID: nil, deviceName: "MacBook Pro",
+                                   progress: 83, duration: 243, at: Date(), shuffle: false, repeatMode: "track", volume: nil, disallows: ["skipping_prev"]))
+        render(m, geo, dir, "notch_music_paused")
     }
 
     /// The main window, each pane, after a couple of snapshots of history.

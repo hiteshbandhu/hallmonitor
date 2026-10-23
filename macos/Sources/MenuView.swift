@@ -20,6 +20,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         super.init()
         menu.delegate = self
         menu.autoenablesItems = false
+        // One width, always: every line is cut to fit it (StatusMenu.textWidth).
+        menu.minimumWidth = StatusMenu.width
         item.menu = menu
         item.button?.imagePosition = .imageLeading
         updateButton()
@@ -119,7 +121,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             item.title = s.name
             item.setSubtitle(detail(s))
             if let since = s.status_since {
-                item.badge = NSMenuItemBadge(string: s.needsYou ? "needs you" : shortDuration(Date().timeIntervalSince(since)))
+                item.badge = NSMenuItemBadge(string: shortDuration(Date().timeIntervalSince(since)))
             }
         }
     }
@@ -140,18 +142,50 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         } else {
             section("Needs You", board.needsYou)
             section("Working", board.working)
-            section("Idle", Array(board.idle.prefix(8)))
+            idle()
         }
 
         usage()
 
+        // The switches you flip day to day; the rest is in Settings.
+        menu.addItem(.separator())
+        menu.addItem(toggle("Show Agents Around the Notch", "notch"))
+        menu.addItem(toggle("Notifications", "notify"))
+        menu.addItem(toggle("Answer Claude in the Notch", "answerFromNotch"))
+        if Spotify.shared.connected { menu.addItem(toggle("Pause Music for Agents", "spotifyPause")) }
+
         menu.addItem(.separator())
         menu.addItem(action("Open Hall Monitor", "rectangle.grid.2x2", key: "o", #selector(openBoard)))
-        menu.addItem(action("Usage", "chart.bar.xaxis", key: "u", #selector(openUsage)))
         menu.addItem(action("Board in Terminal", "terminal", key: "t", #selector(openTerminal)))
         menu.addItem(.separator())
         menu.addItem(action("Settings…", "gearshape", key: ",", #selector(openSettings)))
-        menu.addItem(action("Quit Hall Monitor", nil, key: "q", #selector(quit)))
+        menu.addItem(action("About Hall Monitor", "info.circle", key: "", #selector(about)))
+        menu.addItem(action("Quit Hall Monitor", "power", key: "q", #selector(quit)))
+    }
+
+    /// Idle agents on one line: they don't need you, and eight rows of them
+    /// made the menu a scroll.
+    private func idle() {
+        let idle = board.idle
+        guard !idle.isEmpty else { return }
+        if menu.numberOfItems > 0 { menu.addItem(.separator()) }
+        menu.addItem(.sectionHeader(title: "Idle"))
+        let names = idle.prefix(3).map(\.project)
+        let more = idle.count - names.count
+        let i = NSMenuItem(title: "\(idle.count) agent\(idle.count == 1 ? "" : "s")", action: #selector(openBoard), keyEquivalent: "")
+        i.target = self
+        i.image = NSImage(systemSymbolName: "moon.zzz", accessibilityDescription: nil)
+        i.setSubtitle(names.joined(separator: ", ") + (more > 0 ? ", +\(more) more" : ""))
+        i.toolTip = idle.map(\.name).joined(separator: "\n")
+        menu.addItem(i)
+    }
+
+    private func toggle(_ title: String, _ key: String) -> NSMenuItem {
+        let i = NSMenuItem(title: title, action: #selector(flip(_:)), keyEquivalent: "")
+        i.target = self
+        i.representedObject = key
+        i.state = UserDefaults.standard.bool(forKey: key) ? .on : .off
+        return i
     }
 
     private func section(_ title: String, _ items: [Session]) {
@@ -167,10 +201,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         i.identifier = NSUserInterfaceItemIdentifier(s.key)
         i.image = ProjectIcon.badged(cwd: s.cwd, host: s.host, provider: s.provider, size: 22)
         i.setSubtitle(detail(s))
+        // The section already says "Needs You": the badge says for how long.
         if let since = s.status_since {
-            let text = s.needsYou ? "needs you" : shortDuration(Date().timeIntervalSince(since))
-            i.badge = NSMenuItemBadge(string: text)
+            i.badge = NSMenuItemBadge(string: shortDuration(Date().timeIntervalSince(since)))
         }
+        i.toolTip = s.last.map { $0.replacingOccurrences(of: "↳ ", with: "") }
         i.submenu = details(s)
         return i
     }
@@ -216,12 +251,10 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             m.addItem(open)
             m.addItem(.separator())
         }
-        var head = "\(Provider.name(s.provider)) · \(statusWord(s.status))"
+        // Status and what it's doing are on the row you came from.
+        var head = Provider.name(s.provider)
         if let started = s.started_at { head += " · started \(started.formatted(.relative(presentation: .named)))" }
         m.addItem(.sectionHeader(title: head))
-        if s.working || s.needsYou {
-            info("Now", s.last?.replacingOccurrences(of: "↳ ", with: ""))
-        }
         info("Asked", s.prompt)
         var run = s.model.map(Model.display) ?? ""
         if let c = s.context_tokens, c > 0 { run += (run.isEmpty ? "" : " · ") + "\(c / 1000)k" }
@@ -245,8 +278,26 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         return m
     }
 
+    /// The menu's one width, and how much of it a row's text may take
+    /// (the rest is icon, badge and submenu arrow).
+    nonisolated static let width: CGFloat = 320
+    nonisolated static let textWidth: CGFloat = 215
+
+    /// s on one line, cut with "…" to fit width in font.
+    nonisolated static func fit(_ s: String, _ font: NSFont, _ width: CGFloat = textWidth) -> String {
+        let one = cut(s, 400)
+        func w(_ t: String) -> CGFloat { (t as NSString).size(withAttributes: [.font: font]).width }
+        guard w(one) > width else { return one }
+        var lo = 0, hi = one.count
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if w(String(one.prefix(mid)) + "…") <= width { lo = mid } else { hi = mid - 1 }
+        }
+        return String(one.prefix(lo)).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
     /// s on one line, at most n characters.
-    static func cut(_ s: String, _ n: Int) -> String {
+    nonisolated static func cut(_ s: String, _ n: Int) -> String {
         let one = s.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
         return one.count <= n ? one : String(one.prefix(n - 1)).trimmingCharacters(in: .whitespaces) + "…"
     }
@@ -259,7 +310,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             let i = NSMenuItem(title: "\(hoursText(t.active_s ?? 0)) of agent time", action: #selector(openUsage), keyEquivalent: "")
             i.target = self
             i.image = NSImage(systemSymbolName: "clock", accessibilityDescription: nil)
-                        i.setSubtitle("\(humanTokens(t.tokens?.total ?? 0)) tokens · \(t.prompts ?? 0) prompts · \(t.tools ?? 0) tool calls")
+            i.setSubtitle("\(humanTokens(t.tokens?.total ?? 0)) tokens · \(t.prompts ?? 0) prompts · \(t.tools ?? 0) tool calls")
             menu.addItem(i)
         }
         for (_, l) in board.limits {
@@ -304,6 +355,22 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     @objc private func openSettings() { onSettings?() }
 
     @objc private func quit() { NSApp.terminate(nil) }
+
+    @objc private func flip(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String else { return }
+        let on = !UserDefaults.standard.bool(forKey: key)
+        UserDefaults.standard.set(on, forKey: key)
+        if key == "answerFromNotch" { board.setAnswerHooks(on) }
+    }
+
+    @objc private func about() {
+        NSApp.activate(ignoringOtherApps: true)
+        let link = NSAttributedString(string: "github.com/hiteshbandhu/hallmonitor", attributes: [
+            .link: URL(string: "https://github.com/hiteshbandhu/hallmonitor")!,
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+        ])
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: link])
+    }
 
     @objc private func focusAgent(_ sender: NSMenuItem) {
         if let s = sender.representedObject as? Session { board.focus(s) }
@@ -372,108 +439,6 @@ func statusWord(_ s: String) -> String {
     }
 }
 
-// MARK: - Settings window
-
-struct SettingsView: View {
-    @AppStorage("notch") private var notch = true
-    @AppStorage("notify") private var notify = true
-    @AppStorage("showMenuBar") private var showMenuBar = true
-    @AppStorage("showCount") private var showCount = false
-    @AppStorage("showLimit") private var showLimit = true
-    @AppStorage("probeLimits") private var probeLimits = true
-    @AppStorage("answerFromNotch") private var answerFromNotch = false
-    @AppStorage("spotifyClientID") private var spotifyClientID = ""
-    @AppStorage("spotifyNowPlaying") private var spotifyNowPlaying = true
-    @AppStorage("spotifyPause") private var spotifyPause = true
-    @ObservedObject private var spotify = Spotify.shared
-    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-
-    var body: some View {
-        Form {
-            Section {
-                Toggle("Show agents around the notch", isOn: $notch)
-                Toggle("Notify when an agent needs you or finishes", isOn: $notify)
-            }
-            Section {
-                Toggle("Show Hall Monitor in the menu bar", isOn: $showMenuBar)
-                Toggle("Show agent count in the menu bar", isOn: $showCount)
-                    .disabled(!showMenuBar)
-                Toggle("Show plan usage in the menu bar", isOn: $showLimit)
-                    .disabled(!showMenuBar)
-            } footer: {
-                if !showMenuBar {
-                    Text("To get back here, open Hall Monitor again from Spotlight or Finder and choose Settings… (⌘,).")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-            }
-            Section {
-                Toggle("Answer Claude’s questions from the notch", isOn: $answerFromNotch)
-                    .onChange(of: answerFromNotch) { _, on in
-                        (NSApp.delegate as? AppDelegate)?.board.setAnswerHooks(on)
-                    }
-            } footer: {
-                Text("When Claude Code asks you something or wants permission, answer it in the notch. Adds a hook to ~/.claude/settings.json (backed up first); if you don’t answer within two minutes, Claude asks you the usual way.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-            Section {
-                Toggle("Check Claude plan limits every 15 minutes", isOn: $probeLimits)
-                    .onChange(of: probeLimits) { _, _ in (NSApp.delegate as? AppDelegate)?.board.restart() }
-            } footer: {
-                Text("Opens Claude Code's /usage in the background, so limits stay current even for sessions in the Claude app. Nothing is sent to the model, and Hall Monitor never sees your login.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-            Section {
-                if spotify.connected {
-                    LabeledContent("Spotify") {
-                        HStack {
-                            Text("Connected").foregroundStyle(.secondary)
-                            Button("Disconnect") { spotify.disconnect() }
-                        }
-                    }
-                } else {
-                    TextField("Spotify client ID", text: $spotifyClientID, prompt: Text("32 letters and digits"))
-                    LabeledContent("Spotify") {
-                        Button(spotify.connecting ? "Waiting for your browser…" : "Connect") { spotify.connect() }
-                            .disabled(spotify.connecting || !Spotify.validClientID(spotifyClientID.trimmingCharacters(in: .whitespaces)))
-                    }
-                }
-                Toggle("Show what’s playing in the notch", isOn: $spotifyNowPlaying)
-                    .disabled(!spotify.connected)
-                Toggle("Pause music while an agent waits for you", isOn: $spotifyPause)
-                    .disabled(!spotify.connected)
-                if let p = spotify.problem {
-                    Text(p).font(.footnote).foregroundStyle(.red)
-                }
-            } footer: {
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("Needs Spotify Premium. Create an app at developer.spotify.com/dashboard with the Web API, add this redirect URI, and paste its client ID above:")
-                    Text(Spotify.redirectURI).textSelection(.enabled).monospaced()
-                    Text("Your sign-in is kept in the Keychain. Music resumes when no agent is waiting, unless you changed it meanwhile.")
-                }
-                .font(.footnote).foregroundStyle(.secondary)
-            }
-            Section {
-                Toggle("Launch at login", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { _, on in
-                        do {
-                            if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-                        } catch {
-                            launchAtLogin = SMAppService.mainApp.status == .enabled
-                        }
-                    }
-            }
-            Section {
-                LabeledContent("hallmonitor CLI") {
-                    Text(Board.binary).textSelection(.enabled).foregroundStyle(.secondary)
-                }
-            }
-        }
-        .formStyle(.grouped)
-        .frame(width: 460)
-        .fixedSize()
-    }
-}
-
 // MARK: - Shared bits
 
 struct AppIcon: View {
@@ -539,12 +504,12 @@ enum Launcher {
 extension NSMenuItem {
     /// A gray second line under the title, the way menus showed detail
     /// before NSMenuItem.subtitle.
+    /// Both lines are cut to the menu's width, so a long one can't widen it.
     func setSubtitle(_ text: String) {
-        let t = NSMutableAttributedString(string: title, attributes: [
-            .font: NSFont.menuFont(ofSize: 0),
-        ])
-        t.append(NSAttributedString(string: "\n" + text, attributes: [
-            .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
+        let main = NSFont.menuFont(ofSize: 0), small = NSFont.menuFont(ofSize: NSFont.smallSystemFontSize)
+        let t = NSMutableAttributedString(string: StatusMenu.fit(title, main), attributes: [.font: main])
+        t.append(NSAttributedString(string: "\n" + StatusMenu.fit(text, small), attributes: [
+            .font: small,
             .foregroundColor: NSColor.secondaryLabelColor,
         ]))
         attributedTitle = t
