@@ -72,3 +72,20 @@ func TestPendingSkipsRenamedQuestion(t *testing.T) {
 		t.Fatalf("pending = %+v", got)
 	}
 }
+
+func TestToolLabel(t *testing.T) {
+	for tool, want := range map[string][2]string{
+		"Bash":                            {"Bash", ""},
+		"mcp__ccd_session__start_session": {"Start session", "ccd_session"},
+		"mcp__plugin_playwright_playwright__browser_click": {"Browser click", "plugin_playwright_playwright"},
+		"mcp__github__create-pull-request":                 {"Create pull request", "github"},
+		"mcp__linear__getIssue":                            {"GetIssue", "linear"},
+		"mcp__broken":                                      {"mcp__broken", ""},
+		"mcp____x":                                         {"mcp____x", ""},
+	} {
+		name, server := ToolLabel(tool)
+		if name != want[0] || server != want[1] {
+			t.Errorf("ToolLabel(%q) = %q, %q; want %q, %q", tool, name, server, want[0], want[1])
+		}
+	}
+}

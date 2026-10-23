@@ -149,7 +149,11 @@ func (a Adapter) Collect(ctx context.Context) ([]model.Session, error) {
 			sessions[i].Ask = &a
 			sessions[i].Status = model.StatusWaiting
 			if a.Kind == ask.KindPermission {
-				sessions[i].Last = "wants to use " + a.Tool + " · " + model.Snip(a.Detail, 160)
+				tool, server := ask.ToolLabel(a.Tool)
+				if server != "" {
+					tool += " (" + server + ")"
+				}
+				sessions[i].Last = "wants to use " + tool + " · " + model.Snip(a.Detail, 160)
 			} else if len(a.Questions) > 0 {
 				sessions[i].Last = "asks · " + a.Questions[0].Question
 			}

@@ -55,8 +55,23 @@ enum SnapshotMode {
     }
 
     /// The notch asking a question, and asking for permission (sample data).
+    /// With HALLMONITOR_SNAPSHOT_ASKS set to a folder of questions the hook
+    /// posted, each of those too, as notch_form_<file>.
     private static func renderAsks(board: Board, geo: NotchGeometry, dir: String) {
         guard let s = board.sessions.first(where: { $0.provider == "claude" }) ?? board.sessions.first else { return }
+        if let folder = ProcessInfo.processInfo.environment["HALLMONITOR_SNAPSHOT_ASKS"],
+           let files = try? FileManager.default.contentsOfDirectory(atPath: folder) {
+            for f in files.sorted() where f.hasSuffix(".json") {
+                guard let data = FileManager.default.contents(atPath: folder + "/" + f),
+                      let a = try? Board.decoder.decode(PendingAsk.self, from: data) else { continue }
+                let m = NotchModel()
+                m.geometry = geo
+                m.preview(s, a)
+                let name = "notch_form_" + f.replacingOccurrences(of: ".json", with: "")
+                renderView(NotchView(model: m).transaction { $0.animation = nil }, size: geo.canvas, dir, name)
+                renderView(NotchView(model: m).transaction { $0.animation = nil }, size: geo.canvas, dir, name)
+            }
+        }
         let soon = Date().addingTimeInterval(102)
         let q = PendingAsk(id: "snap-q", session_id: s.id, kind: "question", questions: [
             AskQuestion(question: "The webhook retries fail on duplicate events. How should I handle them?", header: "Approach",
@@ -74,7 +89,9 @@ enum SnapshotMode {
                         multiSelect: false)], tool: nil, detail: nil, deadline: soon)
         let mcp = PendingAsk(id: "snap-m", session_id: s.id, kind: "permission", questions: nil, tool: "Bash",
                              detail: "cd services/billing\npnpm prisma migrate deploy\npnpm test --filter billing -- --runInBand\ngit add -A && git commit -m \"billing: split line items\"", complete: true, deadline: soon)
-        for (name, a) in [("notch_ask_question", q), ("notch_ask_permission", p), ("notch_ask_long", long), ("notch_ask_script", mcp)] {
+        let tool = PendingAsk(id: "snap-t", session_id: s.id, kind: "permission", questions: nil, tool: "mcp__ccd_session__start_session",
+                              detail: "initiation: \"offer\"\ntitle: \"Review the billing PR\"", complete: true, deadline: soon)
+        for (name, a) in [("notch_ask_question", q), ("notch_ask_permission", p), ("notch_ask_long", long), ("notch_ask_script", mcp), ("notch_ask_mcp", tool)] {
             let m = NotchModel()
             m.geometry = geo
             m.preview(s, a)

@@ -64,17 +64,72 @@ type Ask struct {
 	Tool      string     `json:"tool,omitempty"`      // KindPermission: the tool, e.g. "Bash"
 	Detail    string     `json:"detail,omitempty"`    // KindPermission: what it wants to do
 	Complete  bool       `json:"complete,omitempty"`  // KindPermission: Detail is all of it, so it may be allowed
-	PID       int        `json:"pid,omitempty"`       // the waiting hook; when it's gone, so is the question
-	At        time.Time  `json:"at"`
-	Deadline  time.Time  `json:"deadline"`
+	// KindPermission: the same input as a form the app lays out per tool,
+	// and whether the form holds all of it (then it may be allowed).
+	// Detail stays for apps that don't read forms.
+	Form         []Block   `json:"form,omitempty"`
+	FormComplete bool      `json:"form_complete,omitempty"`
+	Always       []string  `json:"always,omitempty"` // KindPermission: Claude Code's "don't ask again" choices, described
+	PID          int       `json:"pid,omitempty"`    // the waiting hook; when it's gone, so is the question
+	At           time.Time `json:"at"`
+	Deadline     time.Time `json:"deadline"`
+}
+
+// Block is one piece of a permission form. Every input field lands in
+// exactly one block, so the form shows all of what Allow approves.
+type Block struct {
+	// "headline" (Text, with Icon), "code" (Text, monospaced, with Label),
+	// "text" (Label and prose Text), "note" (Claude's own words about the
+	// call, Text), "diff" (Diff lines), "chips" (Items; Warn marks the
+	// risky ones) or "field" (Label and Text, Mono when it's data).
+	Kind  string     `json:"kind"`
+	Label string     `json:"label,omitempty"`
+	Text  string     `json:"text,omitempty"`
+	Icon  string     `json:"icon,omitempty"` // an SF Symbol name
+	Mono  bool       `json:"mono,omitempty"`
+	Diff  []DiffLine `json:"diff,omitempty"`
+	Items []Chip     `json:"items,omitempty"`
+}
+
+// DiffLine is a line of an edit: Op is " " (kept), "-" (removed) or "+".
+type DiffLine struct {
+	Op   string `json:"op"`
+	Text string `json:"text"`
+}
+
+// Chip is one short fact about a call, like "In background".
+type Chip struct {
+	Text string `json:"text"`
+	Warn bool   `json:"warn,omitempty"`
 }
 
 // Answer is what the app writes back.
 type Answer struct {
-	// "answer": Answers holds the choices; "allow" / "deny" for permissions;
+	// "answer": Answers holds the choices; "allow" / "deny" for permissions,
+	// or "always" with Always, the index of the "don't ask again" choice;
 	// "pass": leave it to Claude Code's own prompt.
 	Action  string              `json:"action"`
 	Answers map[string][]string `json:"answers,omitempty"` // question text -> labels (or typed text)
+	Always  int                 `json:"always,omitempty"`
+}
+
+// ToolLabel names a tool for people: an MCP tool's mcp__server__tool_name
+// reads as its name in words and the server it comes from ("Start session",
+// "ccd_session"); any other tool is its own name, with no server.
+func ToolLabel(tool string) (name, server string) {
+	rest, ok := strings.CutPrefix(tool, "mcp__")
+	if !ok {
+		return tool, ""
+	}
+	server, name, ok = strings.Cut(rest, "__")
+	if !ok || server == "" || name == "" {
+		return tool, ""
+	}
+	words := strings.Join(strings.FieldsFunc(name, func(r rune) bool { return r == '_' || r == '-' }), " ")
+	if words == "" {
+		return tool, ""
+	}
+	return strings.ToUpper(words[:1]) + words[1:], server
 }
 
 // Dir is where pending questions live.

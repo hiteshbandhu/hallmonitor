@@ -56,6 +56,8 @@ type hookInput struct {
 	Tool       string          `json:"tool_name"`
 	ToolUseID  string          `json:"tool_use_id"`
 	ToolInput  json.RawMessage `json:"tool_input"`
+	// PermissionRequest: the "don't ask again" options Claude Code offers.
+	Suggestions []json.RawMessage `json:"permission_suggestions"`
 }
 
 // interactive are tools whose permission prompt is the tool itself: a
@@ -74,6 +76,7 @@ func hook() {
 	a := ask.Ask{ID: ask.NewID(), SessionID: h.SessionID, CWD: h.CWD, PID: os.Getpid(), At: time.Now()}
 	a.Deadline = a.At.Add(askWait)
 	var questions json.RawMessage
+	var always []json.RawMessage
 	switch {
 	case h.Event == "PreToolUse" && h.Tool == "AskUserQuestion":
 		var ti struct {
@@ -88,6 +91,8 @@ func hook() {
 		a.Kind = ask.KindPermission
 		a.Tool = h.Tool
 		a.Detail, a.Complete = permissionDetail(h.Tool, h.ToolInput)
+		a.Form, a.FormComplete = permissionForm(h.Tool, h.ToolInput)
+		a.Always, always = alwaysChoices(h.Suggestions)
 	default:
 		return
 	}
@@ -110,13 +115,15 @@ func hook() {
 	if !ok {
 		return
 	}
-	out := hookOutput(h.Event, a, questions, ans)
+	out := hookOutput(h.Event, a, questions, ans, always)
 	if out != nil {
 		_ = json.NewEncoder(os.Stdout).Encode(out)
 	}
 }
 
-func hookOutput(event string, a ask.Ask, questions json.RawMessage, ans ask.Answer) any {
+// hookOutput turns the app's answer into Claude Code's hook output. always
+// are the raw "don't ask again" suggestions behind a.Always.
+func hookOutput(event string, a ask.Ask, questions json.RawMessage, ans ask.Answer, always []json.RawMessage) any {
 	switch {
 	case event == "PreToolUse" && ans.Action == "answer":
 		answers := map[string]any{}
@@ -137,8 +144,15 @@ func hookOutput(event string, a ask.Ask, questions json.RawMessage, ans ask.Answ
 			"permissionDecisionReason": "Answered in Hall Monitor",
 			"updatedInput":             map[string]any{"questions": questions, "answers": answers},
 		}}
-	case event == "PermissionRequest" && ans.Action == "allow" && !a.Complete:
+	case event == "PermissionRequest" && (ans.Action == "allow" || ans.Action == "always") && !a.Complete && !a.FormComplete:
 		return nil // you couldn't see all of it: Claude asks as usual
+	case event == "PermissionRequest" && ans.Action == "always":
+		if ans.Always < 0 || ans.Always >= len(always) {
+			return nil
+		}
+		// Claude Code's own suggestion, word for word.
+		return map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "PermissionRequest",
+			"decision": map[string]any{"behavior": "allow", "updatedPermissions": []json.RawMessage{always[ans.Always]}}}}
 	case event == "PermissionRequest" && (ans.Action == "allow" || ans.Action == "deny"):
 		d := map[string]any{"behavior": ans.Action}
 		if ans.Action == "deny" {
