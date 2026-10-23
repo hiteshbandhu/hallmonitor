@@ -94,7 +94,7 @@ final class NotchController {
         }
         let zone: NSRect
         if model.hovering {
-            let s = geo.size(for: .expanded(rows: model.rowCount))
+            let s = geo.size(for: model.expandedMode)
             zone = NSRect(x: screen.frame.midX - s.width / 2, y: top - s.height, width: s.width, height: s.height)
         } else {
             zone = NSRect(x: screen.frame.midX - geo.notchWidth / 2, y: top - geo.notchHeight,
@@ -125,7 +125,9 @@ enum NotchMode: Equatable {
     case hidden
     case compact
     case banner
-    case expanded(rows: Int)
+    /// The agent list (rows; 0 when there are none and music plays) and,
+    /// beside it, the player.
+    case expanded(rows: Int, music: Bool)
     case ask(height: CGFloat)
 }
 
@@ -138,16 +140,25 @@ struct NotchGeometry {
     let shoulder: CGFloat = 8
 
     static let rowHeight: CGFloat = 56
+    /// The player's column beside the agents, and its height.
+    static let playerWidth: CGFloat = 292
+    static let playerHeight: CGFloat = 170
+    /// The agent list's width, wide enough for a title and its status.
+    var listWidth: CGFloat { max(notchWidth + 2 * ear, 480) }
     /// Room for a question card below the notch: most of the screen.
     var askMax: CGFloat = 640
-    var canvas: CGSize { CGSize(width: max(notchWidth + 2 * ear, 480) + 2 * shoulder + 40, height: notchHeight + max(560, askMax) + 40) }
+    var canvas: CGSize { CGSize(width: listWidth + NotchGeometry.playerWidth + 2 * shoulder + 40, height: notchHeight + max(560, askMax) + 40) }
 
     func size(for mode: NotchMode) -> CGSize {
         switch mode {
         case .hidden: return CGSize(width: notchWidth, height: notchHeight)
         case .compact: return CGSize(width: notchWidth + 2 * ear, height: notchHeight)
         case .banner: return CGSize(width: max(notchWidth + 2 * ear, 420), height: notchHeight + 64)
-        case .expanded(let rows): return CGSize(width: max(notchWidth + 2 * ear, 480), height: notchHeight + 14 + CGFloat(max(rows, 1)) * NotchGeometry.rowHeight)
+        case .expanded(let rows, let music):
+            let list = rows > 0 ? CGFloat(rows) * NotchGeometry.rowHeight : 0
+            let width = (rows > 0 ? listWidth : 0) + (music ? NotchGeometry.playerWidth + (rows > 0 ? 0 : 16) : 0)
+            return CGSize(width: max(width, notchWidth + 2 * ear),
+                          height: notchHeight + 14 + max(list, music ? NotchGeometry.playerHeight : 0))
         case .ask(let h): return CGSize(width: max(notchWidth + 2 * ear, 470), height: notchHeight + min(h, askMax))
         }
     }
@@ -174,11 +185,12 @@ final class NotchModel: ObservableObject {
     /// What Spotify is playing, when you've asked to see it.
     @Published private(set) var nowPlaying: NowPlaying?
 
+    /// Agent rows when hovered; with music and no agents, just the player.
     var rowCount: Int {
-        guard nowPlaying != nil else { return min(4, max(1, visible.count)) }
-        // The player takes two rows, and replaces "No agents running".
-        return min(4, visible.count) + 2
+        nowPlaying != nil && visible.isEmpty ? 0 : min(4, max(1, visible.count))
     }
+
+    var expandedMode: NotchMode { .expanded(rows: rowCount, music: nowPlaying != nil) }
 
     /// The oldest question waiting for an answer, and the agent asking it.
     @Published private(set) var asking: (session: Session, ask: PendingAsk)?
@@ -199,7 +211,7 @@ final class NotchModel: ObservableObject {
             if let m = askMeasured, m.id == a.ask.id, m.index == askIndex { return .ask(height: m.height) }
             return .ask(height: askHeight(a.ask, index: askIndex))
         }
-        if hovering { return .expanded(rows: rowCount) }
+        if hovering { return expandedMode }
         if banner != nil { return .banner }
         if !working.isEmpty || !needsYou.isEmpty || nowPlaying?.isPlaying == true { return .compact }
         return .hidden
@@ -250,8 +262,11 @@ final class NotchModel: ObservableObject {
 
     func layoutAsk(index: Int) { askIndex = index }
 
-    /// For snapshots: show a track without Spotify.
-    func previewMusic(_ np: NowPlaying?) { nowPlaying = np }
+    /// For snapshots: show a track without Spotify, beside these agents.
+    func previewMusic(_ np: NowPlaying?, agents: [Session] = []) {
+        nowPlaying = np
+        visible = agents
+    }
 
     /// For snapshots: show a question without the feed.
     func preview(_ s: Session, _ a: PendingAsk) { asking = (session: s, ask: a) }
@@ -317,11 +332,17 @@ struct NotchView: View {
                         .transition(.blurFade)
                 }
             case .expanded:
-                VStack(spacing: 0) {
-                    if !model.visible.isEmpty || model.nowPlaying == nil {
+                // Agents on the left, the player in its own card on the
+                // right: two things, side by side.
+                HStack(alignment: .top, spacing: 8) {
+                    if model.rowCount > 0 {
                         AgentList(sessions: Array(model.visible.prefix(4))) { model.open($0) }
+                            .frame(maxWidth: .infinity)
                     }
-                    if let np = model.nowPlaying { PlayerCard(track: np) }
+                    if let np = model.nowPlaying {
+                        PlayerCard(track: np)
+                            .frame(width: NotchGeometry.playerWidth - 8, height: NotchGeometry.playerHeight - 8, alignment: .top)
+                    }
                 }
                 .padding(.horizontal, 8 + geo.shoulder)
                 .padding(.top, 4)
@@ -389,29 +410,25 @@ private struct PlayerCard: View {
     @State private var volume: Double?  // percent, while dragging
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             HStack(spacing: 10) {
-                AlbumArt(image: track.art, size: 40)
-                VStack(alignment: .leading, spacing: 1) {
+                AlbumArt(image: track.art, size: 48)
+                VStack(alignment: .leading, spacing: 2) {
                     Text(track.title)
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
                     Text(track.artist)
-                        .font(.system(size: 11))
+                        .font(.system(size: 11.5))
                         .foregroundStyle(.white.opacity(0.55))
                         .lineLimit(1)
                 }
-                Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 4) {
-                    devicePicker
-                    if let v = track.volume { volumeSlider(v) }
-                }
+                Spacer(minLength: 0)
             }
             progress
             // One centered group, as in Spotify: shuffle and repeat flank
             // the transport, so play sits in the middle.
-            HStack(spacing: 14) {
+            HStack(spacing: 12) {
                 button("shuffle", on: track.shuffle, help: track.shuffle ? "Shuffle is on" : "Shuffle",
                        off: "toggling_shuffle") { spotify.toggleShuffle() }
                 button("backward.fill", help: "Previous", off: "skipping_prev") { spotify.previous() }
@@ -423,18 +440,22 @@ private struct PlayerCard: View {
                        off: track.repeatMode == "off" ? "toggling_repeat_context" : "toggling_repeat_track") { spotify.cycleRepeat() }
             }
             .frame(maxWidth: .infinity)
+            HStack(spacing: 8) {
+                devicePicker
+                Spacer(minLength: 8)
+                if let v = track.volume { volumeSlider(v) }
+            }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 8)
-        .frame(height: 2 * NotchGeometry.rowHeight)
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.white.opacity(0.07)))
         .onAppear { spotify.loadDevices() }
     }
 
     private var progress: some View {
         TimelineView(.periodic(from: .now, by: 1)) { ctx in
             let now = scrub ?? track.position(at: ctx.date)
-            HStack(spacing: 8) {
-                Text(time(now)).frame(width: 34, alignment: .trailing)
+            HStack(spacing: 6) {
+                Text(time(now)).frame(width: 30, alignment: .leading)
                 Slider(value: Binding(get: { now }, set: { scrub = $0 }), in: 0...max(1, track.duration)) { editing in
                     if !editing, let s = scrub {
                         spotify.seek(to: s)
@@ -444,7 +465,7 @@ private struct PlayerCard: View {
                 .controlSize(.mini)
                 .tint(.white)
                 .disabled(track.disallows.contains("seeking") || track.duration == 0)
-                Text("-" + time(max(0, track.duration - now))).frame(width: 38, alignment: .leading)
+                Text("-" + time(max(0, track.duration - now))).frame(width: 34, alignment: .trailing)
             }
             .font(.system(size: 10, weight: .medium).monospacedDigit())
             .foregroundStyle(.white.opacity(0.5))
@@ -495,7 +516,7 @@ private struct PlayerCard: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
-        .fixedSize()
+        .frame(maxWidth: 150, alignment: .leading)
         .disabled(track.disallows.contains("transferring_playback"))
         .help("Play on another device")
     }

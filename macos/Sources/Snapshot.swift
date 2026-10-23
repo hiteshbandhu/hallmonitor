@@ -42,10 +42,10 @@ enum SnapshotMode {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                             render(model, geo, dir, "notch_banner_done")
                             for tab in SettingsTab.allCases {
-                                renderView(tab.view, size: NSSize(width: 480, height: 460), dir, "settings_\(tab.rawValue)", opaque: true)
+                                renderView(tab.view, size: SettingsWindow.size, dir, "settings_\(tab.rawValue)", opaque: true)
                             }
                             renderAsks(board: board, geo: geo, dir: dir)
-                            renderMusic(geo: geo, dir: dir)
+                            renderMusic(board: board, geo: geo, dir: dir)
                             renderWindow(board: board, dir: dir) { NSApp.terminate(nil) }
                         }
                     }
@@ -86,7 +86,7 @@ enum SnapshotMode {
 
     /// Spotify playing with no agents around: the ears, then the hover list
     /// (sample track and a drawn cover).
-    private static func renderMusic(geo: NotchGeometry, dir: String) {
+    private static func renderMusic(board: Board, geo: NotchGeometry, dir: String) {
         let cover = NSImage(size: NSSize(width: 120, height: 120), flipped: false) { r in
             NSGradient(colors: [.systemPink, .systemOrange, .systemYellow])?.draw(in: r, angle: 45)
             return true
@@ -101,6 +101,11 @@ enum SnapshotMode {
         m.previewMusic(NowPlaying(trackID: "snap", title: "Midnight City", artist: "M83", artURL: nil, art: cover, isPlaying: false, deviceID: nil, deviceName: "MacBook Pro",
                                    progress: 83, duration: 243, at: Date(), shuffle: false, repeatMode: "track", volume: nil, disallows: ["skipping_prev"]))
         render(m, geo, dir, "notch_music_paused")
+        // The busy case: agents and the player side by side.
+        m.previewMusic(NowPlaying(trackID: "snap", title: "Midnight City", artist: "M83", artURL: nil, art: cover, isPlaying: true, deviceID: nil, deviceName: "MacBook Pro",
+                                   progress: 83, duration: 243, at: Date(), shuffle: true, repeatMode: "context", volume: 64),
+                       agents: Array(board.sessions.filter { !$0.stale }.prefix(4)))
+        render(m, geo, dir, "notch_music_agents")
     }
 
     /// The main window, each pane, after a couple of snapshots of history.

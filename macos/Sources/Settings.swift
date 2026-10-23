@@ -5,7 +5,8 @@ import SwiftUI
 // MARK: - Settings window
 //
 // A standard macOS settings window: toolbar tabs across the top, one pane
-// each, and the window resizes to the pane.
+// each. Every pane has the same size, so switching tabs never resizes the
+// window; a pane that runs longer scrolls.
 
 enum SettingsTab: String, CaseIterable {
     case general, notch, claude, spotify, about
@@ -44,13 +45,16 @@ enum SettingsTab: String, CaseIterable {
 
 @MainActor
 enum SettingsWindow {
+    static let size = NSSize(width: 540, height: 500)
+
     static func make() -> NSWindow {
         let tabs = NSTabViewController()
         tabs.tabStyle = .toolbar
-        tabs.transitionOptions = [.allowUserInteraction, .crossfade]
+        tabs.transitionOptions = [.allowUserInteraction] // a straight switch, no resize or fade
         for tab in SettingsTab.allCases {
             let host = NSHostingController(rootView: tab.view)
-            host.sizingOptions = .preferredContentSize
+            host.sizingOptions = []
+            host.preferredContentSize = SettingsWindow.size
             let item = NSTabViewItem(viewController: host)
             item.label = tab.title
             item.identifier = tab.rawValue
@@ -59,6 +63,7 @@ enum SettingsWindow {
         }
         let w = NSWindow(contentViewController: tabs)
         w.styleMask = [.titled, .closable]
+        w.setContentSize(SettingsWindow.size)
         w.toolbarStyle = .preference
         w.isReleasedWhenClosed = false
         return w
@@ -70,17 +75,25 @@ private struct SettingsPane<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
+        // A grouped Form scrolls by itself once it outgrows the window.
         Form { content }
             .formStyle(.grouped)
-            .frame(width: 480)
-            .fixedSize()
+            .frame(width: SettingsWindow.size.width, height: SettingsWindow.size.height)
     }
 }
 
 private struct Footer: View {
     let text: String
     init(_ text: String) { self.text = text }
-    var body: some View { Text(text).font(.footnote).foregroundStyle(.secondary) }
+    // Left-aligned like the rows above it; a grouped Form would otherwise
+    // push footers to the trailing edge.
+    var body: some View {
+        Text(text)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }
 
 // MARK: General
@@ -194,10 +207,11 @@ struct SpotifySettings: View {
                 }
             } footer: {
                 if !spotify.connected {
-                    VStack(alignment: .trailing, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Footer("Needs Spotify Premium. Create an app at developer.spotify.com/dashboard with the Web API, add this redirect URI, and paste its client ID above:")
                         Text(Spotify.redirectURI).font(.footnote.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             Section {
