@@ -15,6 +15,9 @@ import (
 // offered for allowing, just as with the plain detail.
 const maxForm = 8000
 
+// maxAlways is the longest "don't ask again" choice the notch offers.
+const maxAlways = 160
+
 // permissionForm lays a tool's input out for the notch: a shell command as
 // code, an edit as a diff, a URL as a headline. Each tool takes the fields
 // it knows, by name and type; every field it doesn't (an unknown one, or a
@@ -459,7 +462,10 @@ func lineDiff(old, repl string) []ask.DiffLine {
 // alwaysChoices are Claude Code's own "don't ask again" suggestions that the
 // notch can offer: allow rules, extra directories, and accepting edits.
 // Each comes back to Claude Code exactly as it was sent; the app only sees
-// its description, and answers with an index.
+// its description, and answers with an index. A standing grant is offered
+// only when its description is short and plain enough to read whole: at
+// most three rules or directories, one line, maxAlways characters. Anything
+// bigger is left to Claude Code's own prompt.
 func alwaysChoices(suggestions []json.RawMessage) (labels []string, raw []json.RawMessage) {
 	where := map[string]string{
 		"session": "for this session", "localSettings": "in this project, for you",
@@ -482,7 +488,7 @@ func alwaysChoices(suggestions []json.RawMessage) (labels []string, raw []json.R
 		}
 		var what string
 		switch {
-		case e.Type == "addRules" && e.Behavior == "allow" && len(e.Rules) > 0:
+		case e.Type == "addRules" && e.Behavior == "allow" && len(e.Rules) > 0 && len(e.Rules) <= 3:
 			var rs []string
 			for _, r := range e.Rules {
 				name, _ := ask.ToolLabel(r.Tool)
@@ -492,14 +498,18 @@ func alwaysChoices(suggestions []json.RawMessage) (labels []string, raw []json.R
 				rs = append(rs, name)
 			}
 			what = "Always allow " + strings.Join(rs, ", ")
-		case e.Type == "addDirectories" && len(e.Dirs) > 0:
+		case e.Type == "addDirectories" && len(e.Dirs) > 0 && len(e.Dirs) <= 3:
 			what = "Always allow access to " + strings.Join(e.Dirs, ", ")
 		case e.Type == "setMode" && e.Mode == "acceptEdits":
 			what = "Allow all edits"
 		default:
 			continue
 		}
-		labels = append(labels, visible(what+" "+where[e.Dest]))
+		label := what + " " + where[e.Dest]
+		if strings.ContainsAny(label, "\n\r") || len([]rune(label)) > maxAlways || visible(label) != label {
+			continue
+		}
+		labels = append(labels, label)
 		raw = append(raw, s)
 		if len(raw) == 2 {
 			break

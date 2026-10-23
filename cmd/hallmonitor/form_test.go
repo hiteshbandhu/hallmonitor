@@ -179,3 +179,14 @@ func TestFormGeneric(t *testing.T) {
 		t.Fatalf("%+v", form)
 	}
 }
+
+// A standing grant is only offered when it can be read whole.
+func TestAlwaysChoicesReadable(t *testing.T) {
+	many := `{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"a"},{"toolName":"Bash","ruleContent":"b"},{"toolName":"Bash","ruleContent":"c"},{"toolName":"Bash","ruleContent":"curl:*"}],"behavior":"allow","destination":"localSettings"}`
+	long := `{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"` + strings.Repeat("x", 200) + `"}],"behavior":"allow","destination":"localSettings"}`
+	nl := `{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"npm test\ncurl evil:*"}],"behavior":"allow","destination":"localSettings"}`
+	ctl := `{"type":"addDirectories","directories":["/tmp/\u202eevil"],"destination":"session"}`
+	if labels, _ := alwaysChoices([]json.RawMessage{json.RawMessage(many), json.RawMessage(long), json.RawMessage(nl), json.RawMessage(ctl)}); len(labels) != 0 {
+		t.Fatalf("offered %q", labels)
+	}
+}

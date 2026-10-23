@@ -296,10 +296,12 @@ struct AskCard: View {
                             Asks.reply(ask.id, action: "always", always: i)
                             model.answered(ask.id)
                         } label: {
+                            // Never cut short: this is a standing grant, read
+                            // all of it (the hook keeps it short anyway).
                             Label(label, systemImage: "checkmark.seal")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(.white.opacity(0.6))
-                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
                                 .multilineTextAlignment(.trailing)
                         }
                         .buttonStyle(.plain)
