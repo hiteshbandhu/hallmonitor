@@ -30,6 +30,9 @@ struct NowPlaying: Equatable {
     var volume: Int?        // nil when the device can't change it
     /// What Spotify won't do right now (an ad, a device that can't seek…).
     var disallows: Set<String> = []
+    /// The cover's color, bright enough to read on black (the notch's
+    /// equalizer); nil until the cover loads.
+    var tint: NSColor?
 
     /// Where the track is now.
     func position(at now: Date) -> TimeInterval {
@@ -283,7 +286,9 @@ final class Spotify: ObservableObject {
         do {
             var np = try await playback()
             if var n = np {
-                n.art = n.artURL == nowPlaying?.artURL ? nowPlaying?.art : nil
+                let same = n.artURL == nowPlaying?.artURL
+                n.art = same ? nowPlaying?.art : nil
+                n.tint = same ? nowPlaying?.tint : nil
                 np = n
             }
             nowPlaying = np
@@ -300,7 +305,27 @@ final class Spotify: ObservableObject {
         guard let (data, resp) = try? await URLSession.shared.data(from: url),
               (resp as? HTTPURLResponse)?.statusCode == 200, data.count < 2 << 20,
               let img = NSImage(data: data), img.isValid else { return }
-        if nowPlaying?.artURL == url { nowPlaying?.art = img }
+        if nowPlaying?.artURL == url {
+            nowPlaying?.art = img
+            nowPlaying?.tint = Spotify.tint(of: img)
+        }
+    }
+
+    /// The cover's average color, lifted so it reads on black: bright, and
+    /// saturated unless the cover is grey to begin with.
+    nonisolated static func tint(of image: NSImage) -> NSColor? {
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        var px = [UInt8](repeating: 0, count: 4)
+        guard let ctx = CGContext(data: &px, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .medium
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        let avg = NSColor(srgbRed: CGFloat(px[0]) / 255, green: CGFloat(px[1]) / 255, blue: CGFloat(px[2]) / 255, alpha: 1)
+        var h: CGFloat = 0, sat: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        avg.getHue(&h, saturation: &sat, brightness: &b, alpha: &a)
+        let grey = sat < 0.12
+        return NSColor(hue: h, saturation: grey ? 0 : min(max(sat, 0.5), 0.85), brightness: max(b, grey ? 0.85 : 0.9), alpha: 1)
     }
 
     // Each control updates the notch at once, then the next poll corrects it.

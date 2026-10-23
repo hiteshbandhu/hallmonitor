@@ -385,9 +385,8 @@ struct NotchView: View {
                         if model.working.count > 1 { count(model.working.count) }
                     }
                 } else if model.nowPlaying?.isPlaying == true {
-                    Image(systemName: "waveform")
-                        .foregroundStyle(NotchPalette.spotify)
-                        .symbolEffect(.variableColor.iterative.dimInactiveLayers)
+                    Equalizer(color: model.nowPlaying?.tint ?? NSColor(NotchPalette.spotify), playing: true)
+                        .frame(width: Equalizer.width, height: Equalizer.height)
                 }
             }
             .font(.system(size: 12, weight: .semibold))
@@ -774,6 +773,63 @@ private struct AgentRow: View {
         case "waiting": return NotchPalette.amber
         case "error": return .red
         default: return .white.opacity(0.45)
+        }
+    }
+}
+
+/// Four bars bouncing to the music, as on the Dynamic Island, in the
+/// cover's color. Core Animation plays them (no timers, no SwiftUI updates),
+/// like SpinningGlyph; paused, they rest low.
+struct Equalizer: NSViewRepresentable {
+    let color: NSColor
+    let playing: Bool
+
+    static let bars = 4
+    static let barWidth: CGFloat = 2.5
+    static let gap: CGFloat = 2
+    static let height: CGFloat = 12
+    static var width: CGFloat { CGFloat(bars) * barWidth + CGFloat(bars - 1) * gap }
+    /// Each bar's own period, so they never fall into step.
+    private static let periods: [CFTimeInterval] = [0.42, 0.58, 0.36, 0.5]
+    private static let rest: CGFloat = 0.25
+
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        v.wantsLayer = true
+        for i in 0..<Equalizer.bars {
+            let bar = CALayer()
+            bar.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            bar.frame = CGRect(x: CGFloat(i) * (Equalizer.barWidth + Equalizer.gap), y: 0,
+                               width: Equalizer.barWidth, height: Equalizer.height)
+            bar.cornerRadius = Equalizer.barWidth / 2
+            v.layer?.addSublayer(bar)
+        }
+        update(v)
+        return v
+    }
+
+    func updateNSView(_ v: NSView, context: Context) { update(v) }
+
+    private func update(_ v: NSView) {
+        for (i, bar) in (v.layer?.sublayers ?? []).enumerated() {
+            bar.backgroundColor = color.cgColor
+            let running = bar.animation(forKey: "bounce") != nil
+            // The height itself, not a scale: a scaled bar's round ends
+            // would squash flat.
+            if playing, !running {
+                let a = CABasicAnimation(keyPath: "bounds.size.height")
+                a.fromValue = Equalizer.height * Equalizer.rest
+                a.toValue = Equalizer.height
+                a.duration = Equalizer.periods[i % Equalizer.periods.count]
+                a.autoreverses = true
+                a.repeatCount = .infinity
+                a.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                a.timeOffset = Double(i) * 0.13 // start out of phase
+                bar.add(a, forKey: "bounce")
+            } else if !playing {
+                bar.removeAnimation(forKey: "bounce")
+                bar.bounds.size.height = Equalizer.height * Equalizer.rest
+            }
         }
     }
 }
