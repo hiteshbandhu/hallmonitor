@@ -681,21 +681,25 @@ private struct AgentList: View {
     }
 }
 
-/// One agent: name and status, what it's doing now, and where.
+/// One agent: name and status, what it's doing now, and where. An idle row
+/// steps back as a whole, so the ones at work read first.
 private struct AgentRow: View {
     let session: Session
 
+    private var idle: Bool { session.status == "idle" }
+
     var body: some View {
         let s = session
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .center, spacing: 10) {
             Image(nsImage: ProjectIcon.badged(cwd: s.cwd, host: s.host, provider: s.provider, size: 30))
                 .interpolation(.high)
                 .frame(width: 30, height: 30)
-            VStack(alignment: .leading, spacing: 2) {
+                .opacity(idle ? 0.7 : 1)
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(s.name)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(idle ? 0.8 : 1))
                         .lineLimit(1)
                     Spacer(minLength: 8)
                     if s.runningSubagents > 0 {
@@ -717,12 +721,12 @@ private struct AgentRow: View {
                 }
                 Text(activity)
                     .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(s.working || s.needsYou ? 0.78 : 0.5))
+                    .foregroundStyle(.white.opacity(idle ? 0.45 : 0.78))
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Text(meta)
                     .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.38))
+                    .foregroundStyle(.white.opacity(idle ? 0.32 : 0.45))
                     .lineLimit(1)
             }
         }
@@ -750,19 +754,31 @@ private struct AgentRow: View {
             .trimmingCharacters(in: .whitespaces)
     }
 
+    /// Model and context first; the folder last and cut in the middle, so a
+    /// long one can't push the rest off the line.
     private var meta: String {
-        var parts = [session.project]
+        var parts: [String] = []
         if let m = session.model, !m.isEmpty { parts.append(Model.display(m)) }
         if let c = session.context_tokens, c > 0 { parts.append("\(c / 1000)k context") }
+        parts.append(middleCut(session.project, 22))
         if let sa = session.subagents, sa.total > 0, session.runningSubagents == 0 { parts.append(sa.label) }
         if let h = session.host, !h.isEmpty { parts.append(h) }
         return parts.joined(separator: " · ")
     }
 
+    private func middleCut(_ s: String, _ max: Int) -> String {
+        guard s.count > max else { return s }
+        let head = (max - 1) / 2 + (max - 1) % 2
+        return s.prefix(head) + "…" + s.suffix(max - 1 - head)
+    }
+
+    /// Just the time when working (the spinner says so) or idle (the
+    /// dimming does); the word only where it's news.
     private func status(_ now: Date) -> String {
         let word = statusWord(session.status)
-        guard let since = session.status_since else { return word }
-        return "\(word) · \(shortDuration(now.timeIntervalSince(since)))"
+        guard let since = session.status_since else { return session.working || idle ? "" : word }
+        let time = shortDuration(now.timeIntervalSince(since))
+        return session.working || idle ? time : "\(word) · \(time)"
     }
 
     /// One meaning per color: amber needs you, red failed. Working is plain
