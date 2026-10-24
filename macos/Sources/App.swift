@@ -36,6 +36,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var askHeartbeat: Timer?
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        // Writing to an extension that just quit must fail, not end the app.
+        signal(SIGPIPE, SIG_IGN)
         Main.migrateSettings()
         UserDefaults.standard.register(defaults: ["notch": true, "notify": true, "showMenuBar": true, "showCount": false, "showLimit": true, "probeLimits": true])
         // Menu bar only, whatever Info.plist says (handy for debug builds).

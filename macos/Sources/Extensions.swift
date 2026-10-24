@@ -690,7 +690,7 @@ final class ExtensionRunner: @unchecked Sendable {
         let data = dir.appendingPathComponent("data", isDirectory: true)
         let tmp = data.appendingPathComponent("tmp", isDirectory: true)
         try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
-        let exe = dir.appendingPathComponent(manifest.executable).resolvingSymlinksInPath()
+        let exe = ExtensionRunner.real(dir.appendingPathComponent(manifest.executable))
         let log = dir.appendingPathComponent("log.txt")
         // A log that's grown big starts over.
         if let size = (try? fm.attributesOfItem(atPath: log.path))?[.size] as? Int, size > 1 << 20 { try? fm.removeItem(at: log) }
@@ -700,7 +700,7 @@ final class ExtensionRunner: @unchecked Sendable {
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
-        p.arguments = ["-p", ExtensionRunner.profile(dir: dir.resolvingSymlinksInPath(), data: data.resolvingSymlinksInPath(), exe: exe, listen: manifest.permissions.listen ?? []), exe.path]
+        p.arguments = ["-p", ExtensionRunner.profile(dir: ExtensionRunner.real(dir), data: ExtensionRunner.real(data), exe: exe, listen: manifest.permissions.listen ?? []), exe.path]
         p.currentDirectoryURL = data
         p.environment = ["HOME": data.path, "TMPDIR": tmp.path + "/", "PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8",
                          "HALLMONITOR_EXTENSION": manifest.id]
@@ -756,6 +756,14 @@ final class ExtensionRunner: @unchecked Sendable {
         }
         process = nil
         input = nil
+    }
+
+    /// The path the kernel sees, which the sandbox matches against.
+    /// (resolvingSymlinksInPath turns /private/tmp into /tmp, which it isn't.)
+    static func real(_ u: URL) -> URL {
+        guard let p = realpath(u.path, nil) else { return u }
+        defer { free(p) }
+        return URL(fileURLWithPath: String(cString: p))
     }
 
     /// What it may do: read the system and its own folder, write only its
