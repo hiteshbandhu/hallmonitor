@@ -6,7 +6,7 @@
       "summary": "What’s playing in the notch, with controls. Pauses your music while an agent waits for you.",
       "version": "1.0.0",
       "url": "https://github.com/hiteshbandhu/hallmonitor/releases/download/spotify-v1.0.0/hallmonitor-spotify-1.0.0.tar.gz",
-      "sha256": "PENDING",
+      "sha256": "ca9e2e83c86079a0bba77471d590258b0e9c20179836f725eb9dc185362764b0",
       "docs": "https://github.com/hiteshbandhu/hallmonitor/blob/main/docs/extensions/spotify.md",
       "symbol": "music.note",
       "min_app": "0.6.0",
