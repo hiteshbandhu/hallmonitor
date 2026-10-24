@@ -41,6 +41,7 @@ enum SnapshotMode {
                         }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                             render(model, geo, dir, "notch_banner_done")
+                            previewExtensions()
                             for tab in SettingsTab.allCases {
                                 renderView(tab.view, size: SettingsWindow.size, dir, "settings_\(tab.rawValue)", opaque: true)
                             }
@@ -99,6 +100,26 @@ enum SnapshotMode {
             renderView(NotchView(model: m).transaction { $0.animation = nil }, size: geo.canvas, dir, name)
             renderView(NotchView(model: m).transaction { $0.animation = nil }, size: geo.canvas, dir, name)
         }
+    }
+
+    /// The Extensions tab: Spotify installed and connected, and a listing.
+    private static func previewExtensions() {
+        let perms = ExtensionPermissions(network: ["accounts.spotify.com", "api.spotify.com", "i.scdn.co"], listen: [43821], agents: true, open: true)
+        let spotify = ExtensionManifest(proto: 1, id: "spotify", name: "Spotify", version: "1.0.0",
+                                        summary: "What’s playing in the notch, with controls. Pauses your music while an agent waits for you.",
+                                        executable: "bin/hallmonitor-spotify", docs: "https://github.com/hiteshbandhu/hallmonitor/blob/main/docs/extensions/spotify.md",
+                                        symbol: "music.note", cards: ["player"], permissions: perms)
+        let json = """
+        [{"kind":"status","label":"Account","text":"Connected"},{"kind":"button","action":"disconnect","label":"Disconnect"},
+         {"kind":"toggle","key":"show","label":"Show what’s playing in the notch","value":true},
+         {"kind":"toggle","key":"pause","label":"Pause music while an agent waits","value":true},
+         {"kind":"note","text":"Music resumes once no agent is waiting, unless you changed it meanwhile. Your sign-in is kept in the Keychain."}]
+        """
+        let form = (try? JSONDecoder().decode([ExtBlock].self, from: Data(json.utf8))) ?? []
+        let other = MarketEntry(id: "example", name: "Example", version: "1.0.0", summary: "A listing as the marketplace shows it.",
+                                url: "https://example.com/x.tar.gz", sha256: "", symbol: "sparkles",
+                                permissions: ExtensionPermissions(network: ["example.com"], listen: nil, agents: false, open: nil))
+        ExtensionHost.shared.preview(spotify, form: form, market: [other])
     }
 
     /// Spotify playing with no agents around: the ears, then the hover list

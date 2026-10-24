@@ -9,14 +9,14 @@ import SwiftUI
 // window; a pane that runs longer scrolls.
 
 enum SettingsTab: String, CaseIterable {
-    case general, notch, claude, spotify, about
+    case general, notch, claude, extensions, about
 
     var title: String {
         switch self {
         case .general: return "General"
         case .notch: return "Notch"
         case .claude: return "Claude Code"
-        case .spotify: return "Spotify"
+        case .extensions: return "Extensions"
         case .about: return "About"
         }
     }
@@ -26,7 +26,7 @@ enum SettingsTab: String, CaseIterable {
         case .general: return "gearshape"
         case .notch: return "rectangle.topthird.inset.filled"
         case .claude: return "asterisk"
-        case .spotify: return "music.note"
+        case .extensions: return "puzzlepiece.extension"
         case .about: return "info.circle"
         }
     }
@@ -37,7 +37,7 @@ enum SettingsTab: String, CaseIterable {
         case .general: GeneralSettings()
         case .notch: NotchSettings()
         case .claude: ClaudeSettings()
-        case .spotify: SpotifySettings()
+        case .extensions: ExtensionsSettings()
         case .about: AboutSettings()
         }
     }
@@ -179,51 +179,196 @@ struct ClaudeSettings: View {
     }
 }
 
-// MARK: Spotify
+// MARK: Extensions
 
-struct SpotifySettings: View {
-    @AppStorage("spotifyClientID") private var clientID = ""
-    @AppStorage("spotifyNowPlaying") private var nowPlaying = true
-    @AppStorage("spotifyPause") private var pause = true
-    @ObservedObject private var spotify = Spotify.shared
+/// What's installed, each with its switch and its own form, then what the
+/// marketplace has.
+struct ExtensionsSettings: View {
+    @ObservedObject private var host = ExtensionHost.shared
 
     var body: some View {
         SettingsPane {
-            Section {
-                if spotify.connected {
-                    LabeledContent("Account") {
-                        HStack {
-                            Text("Connected").foregroundStyle(.secondary)
-                            Button("Disconnect") { spotify.disconnect() }
+            if host.installed.isEmpty {
+                Section {
+                    Text("No extensions yet. Add one below.").foregroundStyle(.secondary)
+                }
+            }
+            ForEach(host.installed) { m in
+                Section {
+                    HStack(spacing: 10) {
+                        ExtensionIcon(symbol: m.symbol)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(m.name).fontWeight(.semibold)
+                            Text(m.summary).font(.footnote).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Toggle("On", isOn: Binding(get: { host.enabled(m.id) }, set: { host.setEnabled(m.id, $0); host.objectWillChange.send() }))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+                    if host.enabled(m.id) {
+                        ForEach(host.forms[m.id] ?? []) { b in ExtBlockRow(id: m.id, block: b) }
+                        if case .failed(let why) = host.states[m.id] {
+                            Text(why).font(.footnote).foregroundStyle(.red).textSelection(.enabled)
                         }
                     }
-                } else {
-                    TextField("Client ID", text: $clientID, prompt: Text("32 letters and digits"))
-                    LabeledContent("Account") {
-                        Button(spotify.connecting ? "Waiting for your browser…" : "Connect") { spotify.connect() }
-                            .disabled(spotify.connecting || !Spotify.validClientID(clientID.trimmingCharacters(in: .whitespaces)))
+                    if let p = host.problems[m.id] { Text(p).font(.footnote).foregroundStyle(.red) }
+                } footer: {
+                    HStack(spacing: 12) {
+                        Text("Version \(m.version)")
+                        if let d = m.docs, let url = URL(string: d), url.scheme == "https" { Link("Setup guide", destination: url) }
+                        Spacer()
+                        if let u = host.update(for: m) {
+                            Button(host.installing.contains(m.id) ? "Updating…" : "Update to \(u.version)") { host.install(u) }
+                                .disabled(host.installing.contains(m.id) || host.needsNewerApp(u))
+                        }
+                        Button("Uninstall", role: .destructive) { host.uninstall(m.id) }
                     }
-                }
-                if let p = spotify.problem {
-                    Text(p).font(.footnote).foregroundStyle(.red)
-                }
-            } footer: {
-                if !spotify.connected {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Footer("Needs Spotify Premium. Create an app at developer.spotify.com/dashboard with the Web API, add this redirect URI, and paste its client ID above:")
-                        Text(Spotify.redirectURI).font(.footnote.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
                 }
             }
             Section {
-                Toggle("Show what’s playing in the notch", isOn: $nowPlaying)
-                Toggle("Pause music while an agent waits", isOn: $pause)
+                let available = host.market.filter { e in !host.installed.contains { $0.id == e.id } }
+                if available.isEmpty, host.marketProblem == nil {
+                    Text(host.market.isEmpty ? "Loading…" : "You have everything.").foregroundStyle(.secondary)
+                }
+                ForEach(available) { e in
+                    HStack(alignment: .top, spacing: 10) {
+                        ExtensionIcon(symbol: e.symbol)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(e.name).fontWeight(.semibold)
+                            Text(e.summary).font(.footnote).foregroundStyle(.secondary)
+                            Text(e.permissions.summary).font(.footnote).foregroundStyle(.tertiary)
+                            if let p = host.problems[e.id] { Text(p).font(.footnote).foregroundStyle(.red) }
+                        }
+                        Spacer()
+                        Button(host.installing.contains(e.id) ? "Installing…" : "Install") { host.install(e) }
+                            .disabled(host.installing.contains(e.id) || host.needsNewerApp(e))
+                            .help(host.needsNewerApp(e) ? "Needs Hall Monitor \(e.min_app ?? "") or later" : "")
+                    }
+                }
+                if let p = host.marketProblem { Text(p).font(.footnote).foregroundStyle(.red) }
+            } header: {
+                Text("Available")
             } footer: {
-                Footer("Music resumes once no agent is waiting, unless you changed it meanwhile. Your sign-in is kept in the Keychain.")
+                VStack(alignment: .leading, spacing: 6) {
+                    Footer("Extensions run in a sandbox: they can reach the internet over HTTPS and keep their own files, but can't read your projects or Claude's, run other programs, or answer for you. Their secrets are kept in the Keychain.")
+                    Button("Install from File…") { pickFile() }
+                        .disabled(host.installing.contains("file"))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .disabled(!spotify.connected)
         }
+        .onAppear { host.loadMarket() }
+    }
+
+    private func pickFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.init(filenameExtension: "gz")!]
+        panel.message = "Choose an extension (.tar.gz). Only install one you trust: it runs in a sandbox, but it's still a program."
+        panel.prompt = "Install"
+        if panel.runModal() == .OK, let url = panel.url { host.installFile(url) }
+    }
+}
+
+private struct ExtensionIcon: View {
+    let symbol: String?
+
+    var body: some View {
+        Image(systemName: symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) == nil ? nil : $0 } ?? "puzzlepiece.extension")
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(.white)
+            .frame(width: 28, height: 28)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.tint))
+    }
+}
+
+/// One row of an extension's form, drawn as Settings draws its own.
+@MainActor
+private struct ExtBlockRow: View {
+    let id: String
+    let block: ExtBlock
+    private var host: ExtensionHost { .shared }
+
+    var body: some View {
+        let b = block
+        switch b.kind {
+        case "status":
+            if let l = b.label, !l.isEmpty {
+                LabeledContent(l) { Text(b.text ?? "").foregroundStyle(tone(b.tone) ?? .secondary) }
+            } else {
+                Text(b.text ?? "").font(.footnote).foregroundStyle(tone(b.tone) ?? .secondary).textSelection(.enabled)
+            }
+        case "input":
+            ExtInput(id: id, block: b)
+        case "toggle":
+            Toggle(b.label ?? "", isOn: Binding(get: { b.value?.bool ?? false }, set: { host.input(id, b.key ?? "", $0) }))
+                .disabled(b.disabled == true)
+        case "button":
+            HStack {
+                Spacer()
+                if b.primary == true {
+                    Button(b.label ?? "") { host.action(id, b.action ?? "") }.buttonStyle(.borderedProminent).disabled(b.disabled == true)
+                } else {
+                    Button(b.label ?? "") { host.action(id, b.action ?? "") }.disabled(b.disabled == true)
+                }
+            }
+        case "note":
+            if b.mono == true {
+                Text(b.text ?? "").font(.footnote.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+            } else {
+                Text(b.text ?? "").font(.footnote).foregroundStyle(.secondary)
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    private func tone(_ t: String?) -> Color? {
+        switch t {
+        case "ok": return .green
+        case "warn": return .orange
+        case "error": return .red
+        default: return nil
+        }
+    }
+}
+
+/// A text field that sends what you type a beat after you stop, and takes
+/// the extension's value only when it isn't what you just sent.
+@MainActor
+private struct ExtInput: View {
+    let id: String
+    let block: ExtBlock
+    @State private var text = ""
+    @State private var sent: String?
+    @State private var pending: DispatchWorkItem?
+
+    var body: some View {
+        Group {
+            if block.secret == true {
+                SecureField(block.label ?? "", text: $text, prompt: block.placeholder.map { Text($0) })
+            } else {
+                TextField(block.label ?? "", text: $text, prompt: block.placeholder.map { Text($0) })
+            }
+        }
+        .disabled(block.disabled == true)
+        .onAppear { text = block.value?.string ?? "" }
+        .onChange(of: block.value?.string ?? "") { _, v in if v != sent { text = v } }
+        .onChange(of: text) { _, v in
+            pending?.cancel()
+            let w = DispatchWorkItem { MainActor.assumeIsolated { send(v) } }
+            pending = w
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: w)
+        }
+        .onSubmit { send(text) }
+    }
+
+    private func send(_ v: String) {
+        guard v != sent, v != (block.value?.string ?? "") || sent != nil else { return }
+        sent = v
+        ExtensionHost.shared.input(id, block.key ?? "", v)
     }
 }
 

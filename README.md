@@ -93,6 +93,14 @@ The app never asks for access to your folders: project icons are only looked up 
 
 <br clear="right">
 
+## Extensions
+
+Extensions add things to the notch that aren't agents. Install them from **Settings → Extensions**; each has a switch and its own setup.
+
+- **[Spotify](docs/extensions/spotify.md):** what's playing beside your agents, with controls, and your music paused while an agent waits for you. Uses your own Spotify developer app; needs Premium.
+
+Each extension is a separate program in a sandbox. It can reach the internet over HTTPS and keep its own files, but it can't read your projects or Claude's, run other programs, or answer for you. Want to write one? See [docs/extensions.md](docs/extensions.md).
+
 ## Usage & limits
 
 ![usage](docs/usage.png)
@@ -146,6 +154,7 @@ Provider logos are drawn as real images in terminals that speak the kitty graphi
 - To read Claude plan limits it runs Claude Code's `/usage` in safe mode (no hooks, MCP servers, plugins or tools) in its own empty folder, and removes that session's transcript afterwards.
 - The usage ledger (`~/.local/share/hallmonitor/usage/`) stores counts only.
 - Remote hosts use your own SSH, and send the same metadata back.
+- Extensions are off until you install one. Each runs sandboxed, sees only whether agents are working or waiting, and keeps its secrets in the Keychain.
 
 ## Reference
 
@@ -169,6 +178,7 @@ hallmonitor hook --install | --uninstall   # answer from the notch
 go build ./cmd/hallmonitor     # the CLI
 macos/build.sh --install      # the menu bar app (needs the Xcode command line tools)
 scripts/release.sh 0.1.0      # release artifacts
+scripts/extension.sh spotify 1.0.0  # an extension for the marketplace
 ```
 
 `launch/` has the scripts that make the launch film: an original beat synthesized in Python and procedural motion design in Blender.

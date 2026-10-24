@@ -156,7 +156,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         menu.addItem(toggle("Show Agents Around the Notch", "notch"))
         menu.addItem(toggle("Notifications", "notify"))
         menu.addItem(toggle("Answer Claude in the Notch", "answerFromNotch"))
-        if Spotify.shared.connected { menu.addItem(toggle("Pause Music While an Agent Waits", "spotifyPause")) }
         menu.addItem(.separator())
         menu.addItem(action("Settings…", "gearshape", key: ",", #selector(openSettings)))
         menu.addItem(action("About Hall Monitor", "info.circle", key: "", #selector(about)))

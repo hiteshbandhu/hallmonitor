@@ -1,0 +1,27 @@
+{
+  "extensions": [
+    {
+      "id": "spotify",
+      "name": "Spotify",
+      "summary": "What’s playing in the notch, with controls. Pauses your music while an agent waits for you.",
+      "version": "1.0.0",
+      "url": "https://github.com/hiteshbandhu/hallmonitor/releases/download/spotify-v1.0.0/hallmonitor-spotify-1.0.0.tar.gz",
+      "sha256": "PENDING",
+      "docs": "https://github.com/hiteshbandhu/hallmonitor/blob/main/docs/extensions/spotify.md",
+      "symbol": "music.note",
+      "min_app": "0.6.0",
+      "permissions": {
+        "network": [
+          "accounts.spotify.com",
+          "api.spotify.com",
+          "i.scdn.co"
+        ],
+        "listen": [
+          43821
+        ],
+        "agents": true,
+        "open": true
+      }
+    }
+  ]
+}

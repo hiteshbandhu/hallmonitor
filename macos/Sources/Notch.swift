@@ -183,7 +183,7 @@ final class NotchModel: ObservableObject {
     private var bannerTask: Task<Void, Never>?
     private var bag: Set<AnyCancellable> = []
 
-    /// What Spotify is playing, when you've asked to see it.
+    /// What an extension's player is playing, when it shows one.
     @Published private(set) var nowPlaying: NowPlaying?
 
     /// Agent rows when hovered; with music and no agents, just the player.
@@ -228,10 +228,7 @@ final class NotchModel: ObservableObject {
 
     func attach(_ board: Board) {
         self.board = board
-        Spotify.shared.$nowPlaying
-            .combineLatest(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
-                .map { _ in () }.prepend(()))
-            .map { np, _ in UserDefaults.standard.bool(forKey: "spotifyNowPlaying") ? np : nil }
+        ExtensionHost.shared.$player
             .removeDuplicates()
             .receive(on: RunLoop.main)
             .sink { [weak self] np in self?.nowPlaying = np }
@@ -263,7 +260,7 @@ final class NotchModel: ObservableObject {
 
     func layoutAsk(index: Int) { askIndex = index }
 
-    /// For snapshots: show a track without Spotify, beside these agents.
+    /// For snapshots: show a track without an extension, beside these agents.
     func previewMusic(_ np: NowPlaying?, agents: [Session] = []) {
         nowPlaying = np
         visible = agents
@@ -402,11 +399,10 @@ struct NotchView: View {
     }
 }
 
-/// Spotify's player: the track and where it's playing, a bar you can drag
-/// to seek, and every control the Web API offers.
+/// A "player" card: the track and where it's playing, a bar you can drag
+/// to seek, and the controls. Each sends its action to the extension.
 private struct PlayerCard: View {
     let track: NowPlaying
-    @ObservedObject private var spotify = Spotify.shared
     @State private var hovered: String?
     @State private var scrub: Double?   // seconds, while dragging the bar
     @State private var volume: Double?  // percent, while dragging
@@ -420,14 +416,14 @@ private struct PlayerCard: View {
             // the transport, so play sits in the middle.
             HStack(spacing: 12) {
                 button("shuffle", on: track.shuffle, help: track.shuffle ? "Shuffle is on" : "Shuffle",
-                       off: "toggling_shuffle") { spotify.toggleShuffle() }
-                button("backward.fill", help: "Previous", off: "skipping_prev") { spotify.previous() }
+                       off: "toggling_shuffle") { act("shuffle") }
+                button("backward.fill", help: "Previous", off: "skipping_prev") { act("previous") }
                 button(track.isPlaying ? "pause.fill" : "play.fill", big: true, help: track.isPlaying ? "Pause" : "Play",
-                       off: track.isPlaying ? "pausing" : "resuming") { spotify.togglePlay() }
-                button("forward.fill", help: "Next", off: "skipping_next") { spotify.next() }
+                       off: track.isPlaying ? "pausing" : "resuming") { act("toggle_play") }
+                button("forward.fill", help: "Next", off: "skipping_next") { act("next") }
                 button(track.repeatMode == "track" ? "repeat.1" : "repeat", on: track.repeatMode != "off",
                        help: ["off": "Repeat", "context": "Repeating all", "track": "Repeating this track"][track.repeatMode] ?? "Repeat",
-                       off: track.repeatMode == "off" ? "toggling_repeat_context" : "toggling_repeat_track") { spotify.cycleRepeat() }
+                       off: track.repeatMode == "off" ? "toggling_repeat_context" : "toggling_repeat_track") { act("repeat") }
             }
             .frame(maxWidth: .infinity)
             HStack(spacing: 8) {
@@ -442,7 +438,7 @@ private struct PlayerCard: View {
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Color.white.opacity(0.07))
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .onAppear { spotify.loadDevices() }
+        .onAppear { act("devices") }
     }
 
     /// The top of the card: the whole cover, uncropped, with the track
@@ -486,7 +482,7 @@ private struct PlayerCard: View {
                 Text(time(now)).frame(width: 30, alignment: .leading)
                 Slider(value: Binding(get: { now }, set: { scrub = $0 }), in: 0...max(1, track.duration)) { editing in
                     if !editing, let s = scrub {
-                        spotify.seek(to: s)
+                        act("seek", ["seconds": s])
                         scrub = nil
                     }
                 }
@@ -507,7 +503,7 @@ private struct PlayerCard: View {
                 .foregroundStyle(.white.opacity(0.55))
             Slider(value: Binding(get: { volume ?? Double(v) }, set: { volume = $0 }), in: 0...100) { editing in
                 if !editing, let n = volume {
-                    spotify.setVolume(Int(n.rounded()))
+                    act("volume", ["percent": Int(n.rounded())])
                     volume = nil
                 }
             }
@@ -521,12 +517,12 @@ private struct PlayerCard: View {
     /// Where it plays, and the other places it could.
     private var devicePicker: some View {
         Menu {
-            if spotify.devices.isEmpty {
+            if track.devices.isEmpty {
                 Text("No other devices are open")
             }
-            ForEach(spotify.devices) { d in
+            ForEach(track.devices) { d in
                 Button {
-                    spotify.play(on: d)
+                    act("play_on", ["device": d.id])
                 } label: {
                     Label(d.name + (d.active ? " ✓" : ""), systemImage: d.symbol)
                 }
@@ -574,6 +570,12 @@ private struct PlayerCard: View {
         .opacity(blocked ? 0.35 : 1)
         .onHover { hovered = $0 ? symbol : (hovered == symbol ? nil : hovered) }
         .help(help)
+    }
+
+    /// Controls, sliders and menus all call back on the main thread.
+    private func act(_ name: String, _ args: [String: Any] = [:]) {
+        let source = track.source
+        MainActor.assumeIsolated { ExtensionHost.shared.action(source, name, args) }
     }
 
     private func time(_ t: TimeInterval) -> String {
