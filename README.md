@@ -181,8 +181,6 @@ scripts/release.sh 0.1.0      # release artifacts
 scripts/extension.sh spotify 1.0.0  # an extension for the marketplace
 ```
 
-`launch/` has the scripts that make the launch film: an original beat synthesized in Python and procedural motion design in Blender.
-
 ## License
 
 MIT
